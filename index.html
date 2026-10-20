@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>末日安全屋</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="description" content="重生回极寒末日前 14 天：筹钱、选安全屋、囤物资，活过 100 天。手机电脑都能玩的网页生存经营游戏。">
+  <meta name="theme-color" content="#070c16">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="末日安全屋">
+  <meta name="format-detection" content="telephone=no">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=ZCOOL+QingKe+HuangYou&display=swap">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="app">
+    <div class="screen" id="boot" style="align-items:center;justify-content:center;color:#8ea3bd;letter-spacing:4px">正在载入……</div>
+  </div>
+  <div class="desk-hint">空格 行动 · 数字键 选择 · 方向键 探索 · P 人员 · B 仓库 · S 商店 · E 探索 · H 安全屋</div>
+
+  <!-- 数据 -->
+  <script src="js/data/items.js"></script>
+  <script src="js/data/world.js"></script>
+  <script src="js/data/cast.js"></script>
+  <script src="js/data/status.js"></script>
+  <!-- 引擎 -->
+  <script src="js/engine/util.js"></script>
+  <script src="js/engine/dsl.js"></script>
+  <script src="js/engine/state.js"></script>
+  <script src="js/engine/sim.js"></script>
+  <script src="js/engine/events.js"></script>
+  <script src="js/engine/combat.js"></script>
+  <script src="js/engine/explore.js"></script>
+  <!-- 剧情与事件内容 -->
+  <script src="js/data/content/prep.js"></script>
+  <script src="js/data/content/prep_random.js"></script>
+  <script src="js/data/content/main.js"></script>
+  <script src="js/data/content/house.js"></script>
+  <script src="js/data/content/random.js"></script>
+  <script src="js/data/content/bubble.js"></script>
+  <script src="js/data/content/explore.js"></script>
+  <script src="js/data/content/recruits.js"></script>
+  <!-- 界面 -->
+  <script src="js/ui/art.js"></script>
+  <script src="js/ui/audio.js"></script>
+  <script src="js/ui/core.js"></script>
+  <script src="js/ui/panels.js"></script>
+  <script src="js/ui/battle.js"></script>
+  <script src="js/ui/exploreui.js"></script>
+  <script src="js/ui/game.js"></script>
+  <script src="js/ui/title.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>

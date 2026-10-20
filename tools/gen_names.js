@@ -1,0 +1,31 @@
+#!/usr/bin/env node
+/* 把数据文件中的可用名称写进 docs/CONTENT_SPEC.md 的 AUTO-NAMES 区块 */
+const fs = require('fs');
+const path = require('path');
+const vm = require('vm');
+const ROOT = path.join(__dirname, '..');
+const ctx = { window: {}, console };
+ctx.window.window = ctx.window;
+vm.createContext(ctx);
+['js/data/items.js', 'js/data/world.js', 'js/data/cast.js', 'js/data/status.js'].forEach((f) => vm.runInContext(fs.readFileSync(path.join(ROOT, f), 'utf8'), ctx));
+const DS = ctx.window.DS;
+const byCat = {};
+Object.values(DS.ITEMS).forEach((it) => (byCat[it.cat] = byCat[it.cat] || []).push(it.name));
+let out = '\n**物品**（`item:` 只能用这些）\n\n';
+Object.entries(byCat).forEach(([c, l]) => (out += `- ${c}：${l.join('、')}\n`));
+out += '\n**伤病状态**：' + Object.keys(DS.STATUS).join('、') + '\n';
+out += '\n**家具**：' + Object.keys(DS.FURNITURE).join('、') + '\n';
+out += '\n**改造**（mod:）：' + Object.keys(DS.MODS).join('、') + '\n';
+out += '\n**载具**：' + Object.keys(DS.VEHICLES).filter((v) => v !== '步行').join('、') + '\n';
+out += '\n**职业**：' + Object.keys(DS.JOBS).join('、') + '\n';
+out += '\n**战斗模板**（battle:）：\n\n' + Object.entries(DS.BATTLES).map(([k, b]) => `- \`${k}\` ${b.name}（${b.foes.map((f) => f[0]).join('+')}）`).join('\n') + '\n';
+out += '\n**探索地点**（loc: / unlock:loc:）：\n\n' + DS.LOCATIONS.map((l) => `- \`${l.id}\` ${l.full}（距离${l.dist}，等级${l.lv}）`).join('\n') + '\n';
+out += '\n**剧情可招募人物**（recruit: / member:）：' + Object.keys(DS.STORY_RECRUITS).join('、') + '\n';
+out += '\n**联系人**（contact: / aff:）：' + Object.keys(DS.CONTACTS).join('、') + '\n';
+out += '\n**结局**（ending:）：' + DS.ENDINGS.map((e) => e.id).join('、') + '\n';
+out += '\n**商店**（shop:）：' + Object.keys(DS.SHOPS).join('、') + '\n';
+const f = path.join(ROOT, 'docs/CONTENT_SPEC.md');
+let md = fs.readFileSync(f, 'utf8');
+md = md.replace(/<!-- AUTO-NAMES -->[\s\S]*?(?=\n---\n\n## 六)/, '<!-- AUTO-NAMES -->\n' + out + '\n');
+fs.writeFileSync(f, md);
+console.log('ok');
