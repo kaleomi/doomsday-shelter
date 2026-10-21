@@ -7,32 +7,46 @@
   function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
 
   A.run = function (o) {
-    o = Object.assign({ days: 100, smart: true, job: '格斗家', perks: [], explore: true, verbose: false }, o || {});
+    o = Object.assign({ days: 100, smart: true, job: '格斗家', perks: [], explore: true, verbose: false, diff: '标准', spring: false, daily: false, dispatch: true }, o || {});
     const errors = [];
     const trace = [];
     const t0 = Date.now();
-    G.newGame({ name: '测试员', gender: '男', job: o.job, perks: o.perks });
+    if (o.daily) {
+      const cfg = DS.Daily.config(o.daily === true ? undefined : o.daily);
+      DS.Ext.withRng(DS.Ext.mulberry(cfg.seed), () => G.newGame({ name: '测试员', gender: cfg.gender, job: cfg.job, perks: cfg.perks.slice(), skills: G.rollSkills(cfg.job, false), diff: '标准', seed: cfg.seed, daily: { date: cfg.date }, mutators: cfg.mutators.slice() }));
+      o.days = 40;
+    } else G.newGame({ name: '测试员', gender: '男', job: o.job, perks: o.perks, diff: o.diff });
     E.planDay();
     const S = G.S;
-    let events = 0, battles = 0, wins = 0, explores = 0;
+    let events = 0, battles = 0, wins = 0, explores = 0, guards = 0, guardWins = 0, dispatches = 0, disasters = {}, springAt = null;
     const seen = {};
     function team() { const me = G.me(); const others = G.home().filter((m) => m !== me && !m.statuses.濒死).sort((a, b) => G.power(b) - G.power(a)).slice(0, 4); return [me, ...others]; }
-    function battle(id, ctx, br, raid) {
-      battles++; const inst0Raid = !!raid;
-      const ex = ctx && ctx.explore;
-      const b = DS.Combat.create(id, ex ? ex.team : team(), { lvBase: ex ? DS.Explore.loc(ex.loc).lv : G.threat(), ctx: ex ? 'explore' : 'home' });
+    function fight(b, noRetreat) {
       let n = 0;
       while (!b.over && n++ < 600) {
         DS.Combat.step(b);
-        const me = b.allies.find((u) => u.m.id === 'me');
+        const me = b.allies.find((u) => u.m && u.m.id === 'me');
         if (me && me.alive && me.hp < me.maxHp * 0.35) {
           const med = ['中级医疗包', '初级医疗包', '止血绷带', '高级医疗包'].find((x) => G.qty(x));
           if (med && b.items < 3) DS.Combat.useItem(b, me.uid, med);
-          else if ((b.tries || 0) < 2) { b.tries = (b.tries || 0) + 1; DS.Combat.retreat(b); }
+          else if (!noRetreat && (b.tries || 0) < 2) { b.tries = (b.tries || 0) + 1; DS.Combat.retreat(b); }
         }
       }
       if (!b.over) { b.over = true; b.win = false; }
-      const out = DS.Combat.finish(b, { home: !ex && inst0Raid, explore: ex });
+    }
+    function battle(id, ctx, br, raid, night) {
+      battles++; const inst0Raid = !!raid;
+      const ex = ctx && ctx.explore;
+      let out;
+      if (night && raid && !ex && S.phase === 'apoc') {
+        guards++;
+        out = DS.Defense.headless(id, (b) => fight(b, true));
+        if (out.win) guardWins++;
+      } else {
+        const b = DS.Combat.create(id, ex ? ex.team : team(), { lvBase: ex ? DS.Explore.loc(ex.loc).lv : G.threat(), ctx: ex ? 'explore' : 'home', pet: ex ? !!(S.exploring && S.exploring.pet) : true });
+        fight(b);
+        out = DS.Combat.finish(b, { home: !ex && inst0Raid, explore: ex });
+      }
       if (out.win) wins++;
       if (out.meDead) { Sim.kill(G.me(), 'battle'); return out; }
       if (br) { const b2 = out.win ? br.win : br.lose; if (b2) { const r2 = E.applyBranch(b2, ctx); handle(r2.actions, { ctx }); } }
@@ -59,7 +73,7 @@
         };
         choice = ok.sort((a, b) => score(b) - score(a))[0];
       } else choice = pick(ok);
-      events++; seen[ev.id] = (seen[ev.id] || 0) + 1;
+      events++; seen[ev.id] = (seen[ev.id] || 0) + 1; A.lastEv = ev.id + '#' + choice[1];
       let res;
       try { res = E.choose(inst, choice[1]); } catch (e) { errors.push(`${ev.id}#${choice[1]}: ${e.message}`); return; }
       if (o.verbose) trace.push(`D${S.day} ${G.timeStr()} [${ev.id}] → ${choice[0].t}`);
@@ -67,7 +81,7 @@
     }
     function handle(act, inst) {
       if (S.ending) return;
-      if (act.battle) battle(act.battle.id, inst.ctx, act.battle, inst.ev && (['战斗','完整度'].includes(inst.ev.cat) || inst.ev.slot === 'night'));
+      if (act.battle) battle(act.battle.id, inst.ctx, act.battle, inst.ev && (['战斗','完整度'].includes(inst.ev.cat) || inst.ev.slot === 'night'), inst.night || (inst.ev && inst.ev.slot === 'night'));
       if (S.ending) return;
       if (act.recruit && S.pendingRecruit) { if (G.canRecruit()) S.members.push(S.pendingRecruit); S.pendingRecruit = null; }
       if (act.shop && o.smart) shop(act.shop);
@@ -108,16 +122,23 @@
       });
     }
     function dailyManage() {
-      // 指派：伤员去医疗床，其它人锻炼/阅读，主角空闲
-      const furn = S.house.furn;
-      G.home().forEach((m) => {
-        m.task = null;
-        const med = furn.find((f) => f.type === '医疗床');
-        if (med && Object.keys(m.statuses).length && !G.home().some((x) => x.task && x.task.fid === med.id)) { m.task = { fid: med.id }; return; }
-        if (m.id === 'me') return;
-        const pl = furn.find((f) => f.type === '种植箱'); if (pl && m.job === '种植者') { m.task = { fid: pl.id }; return; }
-        const r = furn.find((f) => f.type === '收音机'); if (r && !G.home().some((x) => x.task && x.task.fid === r.id)) { m.task = { fid: r.id }; return; }
-      });
+      // 指派：一键安排
+      DS.AutoAssign();
+      // 天灾防备
+      if (S.disaster && !S.disaster.prepared && DS.DISASTERS[S.disaster.type].prep && G.canPay(DS.DISASTERS[S.disaster.type].prep.cost)) DS.Disaster.prepare();
+      if (S.disaster) disasters[S.disaster.type] = 1;
+      // 伙伴：煮狗粮
+      if (S.pet && G.qty('狗粮') < 3 && G.hasFurn('灶台')) { const r = DS.RECIPES.find((x) => x.id === 'kibble'); if (G.canPay(r.in.map((x) => 'item:' + x))) { G.pay(r.in.map((x) => 'item:' + x)); G.addItem('狗粮', r.n, true); } }
+      // 远征
+      if (o.dispatch && S.phase === 'apoc' && S.day % 4 === 0) {
+        const locs = DS.Dispatch.locs().filter((l) => l.lv <= G.threat() + 4);
+        const cand = S.members.filter((m) => !DS.Dispatch.canSend(m) && Object.keys(m.statuses).length === 0).sort((a, b) => G.power(b) - G.power(a));
+        if (locs.length && cand.length >= 2 && S.members.length >= 4) { const loc = locs[locs.length - 1]; if (!DS.Dispatch.send(loc.id, cand.slice(0, 2).map((m) => m.id))) dispatches++; }
+      }
+      // 远征报告
+      if (S.pendingReports) S.pendingReports = [];
+      // 强化主角武器
+      const w = G.me().gear.武器; if (w && S.phase === 'apoc' && S.crystal > 3000) { const r = DS.Armory.rec(w); if (!r || r.lv < 5) DS.Armory.upgrade(w); }
       // 用药
       G.home().forEach((m) => Object.keys(m.statuses).forEach((s) => {
         const cure = Object.keys(S.inv).find((n) => DS.ITEMS[n].cure && (DS.ITEMS[n].cure.includes(s)));
@@ -133,11 +154,13 @@
       // 种植
       G.furnOf('种植箱').forEach((f) => { f.plots = f.plots || []; while (f.plots.length < 2 + f.lv - 1) { const r = ['veg', 'meat', 'tater', 'seed'].map((id) => DS.RECIPES.find((x) => x.id === id)).find((x) => G.canPay(x.in.map((y) => 'item:' + y))); if (!r) break; G.pay(r.in.map((y) => 'item:' + y)); f.plots.push({ rid: r.id, prog: 0 }); } });
       // 制造
-      G.furnOf('工作台').forEach((f) => { if (f.job) return; const want = G.qty('木柴') < 30 && G.qty('木头') > 2 ? 'wood' : G.qty('滤芯') < 6 && G.qty('塑料纤维') > 2 ? 'filter' : null; if (want) { const r = DS.RECIPES.find((x) => x.id === want); if (G.canPay(r.in.map((y) => 'item:' + y))) { G.pay(r.in.map((y) => 'item:' + y)); f.job = { rid: r.id, prog: 0, n: 1 }; } } });
+      G.furnOf('工作台').forEach((f) => { if (f.job) return; const want = G.qty('木柴') < 30 && G.qty('木头') > 2 ? 'wood' : G.qty('滤芯') < 6 && G.qty('塑料纤维') > 2 ? 'filter' : G.qty('尖刺陷阱') < 2 && G.qty('铁板') > 6 && G.qty('木头') > 4 ? 'spike' : null; if (want) { const r = DS.RECIPES.find((x) => x.id === want); if (G.canPay(r.in.map((y) => 'item:' + y))) { G.pay(r.in.map((y) => 'item:' + y)); f.job = { rid: r.id, prog: 0, n: 1 }; } } });
       // 修房
       for (let rr = 0; rr < 5 && S.house.integrity < 80 && S.house.type !== '旧公寓'; rr++) { const c = ['item:木头:3', 'item:铁板:1', S.phase === 'apoc' ? 'crystal:120' : 'money:30000']; const c2 = ['item:木头:2', S.phase === 'apoc' ? 'crystal:30' : 'money:5000']; if (G.canPay(c)) { G.pay(c); S.house.integrity = Math.min(100, S.house.integrity + 10); } else if (S.house.integrity < 50 && G.canPay(c2)) { G.pay(c2); S.house.integrity += 5; } }
       // 末日后：集市买燃料和水
       if (S.phase === 'apoc' && S.market) {
+        const foodU = Object.keys(S.inv).reduce((a, n) => a + ((DS.ITEMS[n].eat || {}).hunger || 0) * S.inv[n], 0);
+        if (foodU < S.members.length * 150) S.market.offers.forEach((of) => { const e = DS.ITEMS[of.item].eat; if (DS.ITEMS[of.item].cat === '食物' && e && e.hunger >= 20) while (of.qty > 0 && S.crystal >= of.price && G.freeVol() > 2) { S.crystal -= of.price; G.addItem(of.item, 1, true); of.qty--; } });
         S.market.offers.forEach((of) => { if (['木柴', '矿泉水', '食物供给包', '压缩饼干', '抗辐射药', '木头', '铁板', '滤芯'].includes(of.item) && S.crystal > of.price + 300) { while (of.qty > 0 && S.crystal > of.price + 300 && G.freeVol() > 5) { S.crystal -= of.price; G.addItem(of.item, 1); of.qty--; } } });
         // 改造
         [['保温', 4], ['防辐射', 4], ['防御', 2]].forEach(([k, lv]) => { const cur = S.house.mods[k] || 0; if (cur < lv) { const c = DS.MODS[k].cost[cur]; const l = ['crystal:' + c[0], ...c.slice(1).map((x) => 'item:' + x)]; if (G.canPay(l) && S.crystal > c[0] + 500) { G.pay(l); S.house.mods[k]++; } } });
@@ -180,13 +203,15 @@
         if (G.isNight()) {
           let g2 = 6; while (S.queue && S.queue.some((id) => (DS.EVENT_BY_ID[id] || {}).slot !== 'night') && g2-- > 0) { const inst = E.pickSlot(); if (!inst) break; chooseOpt(inst); if (S.ending) break; }
           if (S.ending) break;
-          const ni = E.pickNight(); if (ni) chooseOpt(ni);
+          const ni = E.pickNight(); if (ni) { ni.night = true; chooseOpt(ni); }
           if (S.ending) break;
           Sim.sleep(); if (S.ending) break;
-          Sim.newDay(); if (S.ending) break;
+          Sim.newDay();
+          if (S.ending && o.spring && (S.chapter || 1) === 1 && S.day >= 100 && (DS.ENDINGS.find((e) => e.id === S.ending) || {}).good) { springAt = S.ending; DS.Spring.start(); o.days = Math.max(o.days, 160); }
+          if (S.ending) break;
           E.planDay();
           if (S.pendingRecruit) { if (G.canRecruit()) S.members.push(S.pendingRecruit); S.pendingRecruit = null; }
-          if (o.verbose) trace.push(`--- D${S.day} 外${S.env.outT} 内${S.env.inT} 火${S.fireOn && !S.env.fireOut ? DS.Sim.heat() : 0} 柴${G.qty('木柴')}/${G.qty('木头')} 保温${G.hstat('insul').toFixed(2)} 辐${S.env.inRad} 人${S.members.length} 晶${S.crystal} 完${S.house.integrity} 心${G.me().mood} HP${G.me().hp} 容${G.invVol()}/${G.hstat('cap')}`);
+          if (o.verbose) trace.push(`--- D${S.day} 外${S.env.outT} 内${S.env.inT} 火${S.fireOn && !S.env.fireOut ? DS.Sim.heat() : 0} 柴${G.qty('木柴')}/${G.qty('木头')} 保温${G.hstat('insul').toFixed(2)} 辐${S.env.inRad} 人${S.members.length} 晶${S.crystal} 完${S.house.integrity} 心${G.me().mood} HP${G.me().hp} 容${G.invVol()}/${G.hstat('cap')} 粮${Object.keys(S.inv).reduce((a, n) => a + ((DS.ITEMS[n].eat || {}).hunger || 0) * S.inv[n], 0)} 水${Object.keys(S.inv).reduce((a, n) => a + ((DS.ITEMS[n].eat || {}).thirst || 0) * S.inv[n], 0)} 材${['大米', '青菜', '土豆', '红薯', '合成肉', '变异肉'].map((n) => G.qty(n)).join('/')} 种${G.furnOf('种植箱').length}`);
           continue;
         }
         if (o.explore && S.unlocked.explore && S.slot === 1 && S.phase === 'apoc' && S.day % 2 === 0) { exploreOnce(); if (S.ending) break; }
@@ -199,8 +224,10 @@
       ending: S.ending, day: S.day, house: S.house.type, members: S.members.length, crystal: S.crystal, money: S.money,
       events, battles, wins, explores, locs: S.explore.locs.length, done: Object.keys(S.explore.done).length,
       flags: Object.keys(S.flags).filter((f) => /军方|互助|钱万山|白霜|周恪/.test(f)),
-      me: { hp: G.me().hp, lv: G.me().lv, mood: G.me().mood }, cause: S.deathCause, inT: S.env.inT, inRad: S.env.inRad,
+      me: { hp: G.me().hp, lv: G.me().lv, mood: G.me().mood, away: G.me().away, hunger: G.me().hunger, thirst: G.me().thirst, st: Object.keys(G.me().statuses).join(','), exploring: !!S.exploring }, cause: S.deathCause, inT: S.env.inT, inRad: S.env.inRad,
       mods: S.house.mods, ms: Date.now() - t0, errors, trace: trace.slice(-o.traceN || -60), uniqueEvents: Object.keys(seen).length,
+      diff: S.diff, chapter: S.chapter, lastEv: A.lastEv, springAt, guards, guardWins, dispatches, disasters: Object.keys(disasters), pet: S.pet ? `${S.pet.name} Lv${S.pet.lv} 忠${S.pet.loyal}` : (S.flags.伙伴离开 ? '离开了' : null),
+      bondMax: Math.max(0, ...Object.values(S.bonds || {})), daily: S.daily ? (S.endingInfo || {}).score : null, armory: Object.keys(S.armory || {}).length,
     };
   };
 })();

@@ -6,20 +6,24 @@
 
   T.show = function () {
     UI.baseKeys = null;
-    const has = G.hasSave();
+    if (G.slot === 'daily' || !G.hasSave(G.slot)) { const s = [1, 2, 3].find((k) => G.hasSave(k)); G.slot = s || G.meta.lastSlot || 1; }
+    const has = G.hasSave(G.slot);
+    const info = has ? G.slotInfo(G.slot) : null;
     const el = h('div', { class: 'screen title-screen' },
       h('div', { class: 'title-house', html: A.titleHouse() }),
-      h('div', { class: 'title-foot' }, h('span', null, '🔁 重生点 ', h('b', { class: 'pts' }, G.meta.points)), h('span', null, G.meta.runs ? `已轮回 ${G.meta.runs} 次 · 最长 ${G.meta.best} 天` : 'v1.0')),
+      h('div', { class: 'title-foot' }, h('span', null, '🔁 重生点 ', h('b', { class: 'pts' }, G.meta.points)), h('span', null, G.meta.runs ? `已轮回 ${G.meta.runs} 次 · 最长 ${G.meta.best} 天` : 'v2.0')),
       h('div', { class: 'title-logo' }, h('h1', null, '末日安全屋'), h('div', { class: 'sub' }, '重 生 · 极 寒 · 求 生'), h('div', { class: 'tag' }, '距离末日还有 14 天')),
       h('div', { class: 'title-menu' },
-        has ? h('button', { class: 'btn primary', onclick: () => { DS.Audio.unlock(); if (G.load()) DS.Game.start(); } }, '继续游戏') : null,
-        h('button', { class: 'btn ' + (has ? '' : 'primary'), onclick: async () => { DS.Audio.unlock(); if (has && !(await UI.confirm('开始新的一局会覆盖当前存档，确定吗？', '重新开始'))) return; T.create(); } }, '新的开始'),
-        h('div', { class: 'row' }, h('button', { class: 'btn small', onclick: () => T.gallery() }, '📜 结局图鉴'), h('button', { class: 'btn small', onclick: () => T.help() }, '❓ 玩法说明'))));
+        has ? h('button', { class: 'btn primary cont-btn', onclick: () => { DS.Audio.unlock(); if (G.load(G.slot)) DS.Game.start(); } }, '继续游戏', h('span', { class: 'cont-sub' }, `存档${G.slot} · ${info.name} · 第${info.day}天${info.chapter >= 2 ? ' · 春天篇' : ''}`)) : null,
+        h('button', { class: 'btn ' + (has ? '' : 'primary'), onclick: async () => { DS.Audio.unlock(); const slot = await DS.ExtUI.pickSlot(); if (!slot) return; T.create({ slot }); } }, '新的开始'),
+        h('button', { class: 'btn daily-btn', onclick: () => { DS.Audio.unlock(); DS.ExtUI.daily(); } }, '📅 每日挑战', DS.Daily.best() ? h('span', { class: 'cont-sub' }, '今日最高 ' + DS.Daily.best()) : h('span', { class: 'cont-sub' }, '全球排行榜 · 每天 0 点换题')),
+        h('div', { class: 'row' }, h('button', { class: 'btn small', onclick: () => T.gallery() }, '📜 图鉴'), h('button', { class: 'btn small', onclick: () => DS.ExtUI.saves() }, '💾 存档'), h('button', { class: 'btn small', onclick: () => T.help() }, '❓ 玩法'))));
     UI.screen(el);
-    UI.baseKeys = (e) => { if (e.key === 'Enter') { if (has) { if (G.load()) DS.Game.start(); } else T.create(); } };
+    UI.baseKeys = (e) => { if (e.key === 'Enter') { if (has) { if (G.load(G.slot)) DS.Game.start(); } } };
   };
 
-  T.gallery = function () {
+  T.gallery = () => DS.ExtUI.codex();
+  T.oldGallery = function () {
     UI.sheet({
       title: '结局图鉴', sub: `已达成 ${Object.keys(G.meta.endings).length}/${DS.ENDINGS.length}`,
       render(body) {
@@ -47,13 +51,24 @@
           p('🛋️ 点击屋里的家具，可以指派队员去睡觉、锻炼、阅读、种菜、做饭、制造……时间推进时自动结算。'),
           p('🧭 末日后可以组队探索城市：在格子地图里捡物资、躲开或击败敌人，走到 ❗ 完成线路。'),
           p('🏆 活过 100 天会根据安全屋和你的选择进入不同结局。每个结局都会给重生点，用来在下一世激活“重生系统”。'),
+          p('🛡️ 夜里有人来袭时会进入“守卫战”：给队员分配正门 / 窗口 / 屋顶站位，布下陷阱，分 2–3 波打退来犯者。'),
+          p('🐕 末日后可能遇到流浪狗。收养后它会跟着探索、参与战斗、夜里示警，记得喂狗粮或变异肉。'),
+          p('🚩 已经摸清外围的地点，可以派队员远征几天，自动带回物资；主角留守。'),
+          p('🔧 工作台里可以给装备强化（+1 到 +10）和改装词条，同型号的装备共享改装。'),
+          p('🌪️ 末日后会不定期发布天灾预警，提前两天在【安全屋】里做防备能大大减少损失。'),
+          p('🧩 安全屋 → 家具 → 自由布置：移动、旋转家具，摆得巧还有布局加成。'),
+          p('💞 队员之间有羁绊。一起干活、并肩作战会越来越默契，挚友会在战斗中互相掩护。'),
+          p('🌱 活过 100 天并达成好结局后，可以继续“春天篇”：冰雪消融，新的威胁从泥土里长出来。'),
+          p('📅 每日挑战：所有人同一天用同一个角色、同样的天气和词条，30 天内拼分数，上全球排行榜。'),
           p('⌨️ 电脑上：空格行动，数字键选择选项，方向键在探索中移动。'));
       },
     });
   };
 
   // ---------------- 创建角色 ----------------
-  T.create = function () {
+  T.create = function (opts) {
+    opts = opts || {};
+    let diff = G.meta.lastDiff || '标准';
     let gender = U.pick(['男', '女']);
     let name = G.randomName(gender);
     const jobs = Object.keys(DS.JOBS);
@@ -83,8 +98,11 @@
         h('div', { class: 'col' }, skills.map(([s, q]) => DS.Panels.skillRow({ lv: 1, skills }, s, q))),
         h('h3', { class: 'sec' }, '初始属性'),
         h('div', { class: 'statgrid' }, ['力量', '灵巧', '学识', '运气', '速度', '防御'].map((s) => h('div', { class: 's' }, s, h('b', null, (J.base[s] || 3) + (s === '力量' && chosen.has('strong') ? 3 : 0)))), h('div', { class: 's' }, '生命', h('b', null, J.base.hp))),
+        h('h3', { class: 'sec' }, '难度'),
+        h('div', { class: 'seg diff-seg' }, Object.keys(DS.DIFFS).map((k) => h('button', { class: diff === k ? 'on' : '', onclick: () => { diff = k; DS.Audio.tap(); render(); } }, DS.DIFFS[k].icon + ' ' + k))),
+        h('div', { class: 'small muted', style: { margin: '6px 0 2px' } }, DS.DIFFS[diff].desc + (DS.DIFFS[diff].pts !== 1 ? `（结局重生点 ×${DS.DIFFS[diff].pts}）` : '')),
         h('h3', { class: 'sec' }, `重生系统　🔁 ${G.meta.points - spent()} / ${G.meta.points}`),
-        G.meta.points === 0 && !G.meta.runs ? h('div', { class: 'small muted', style: { marginBottom: '8px' } }, '第一世没有重生点。达成结局后获得重生点，下一世可以激活这些系统。') : null,
+        G.meta.points === 0 && !G.meta.runs ? h('div', { class: 'small muted', style: { marginBottom: '8px' } }, '第一世没有重生点。达成结局后获得重生点，下一世可以激活这些系统。') : '',
         h('div', { class: 'col' }, DS.PERKS.map((p) => {
           const on = chosen.has(p.id); const can = on || G.meta.points - spent() >= p.cost;
           return h('div', { class: 'perk' + (on ? ' on' : '') + (can ? '' : ' lock'), onclick: () => { if (on) chosen.delete(p.id); else if (can) chosen.add(p.id); else { UI.toast('重生点不足'); return; } DS.Audio.tap(); render(); } },
@@ -95,9 +113,10 @@
     }
     function start() {
       const cost = spent();
-      G.meta.points -= cost; G.saveMeta();
+      G.meta.points -= cost; G.meta.lastDiff = diff; G.saveMeta();
+      G.useSlot(opts.slot || (G.slot === 'daily' ? G.meta.lastSlot || 1 : G.slot) || 1);
       G.clearSave();
-      G.newGame({ name: name.slice(0, 6), gender, job, look, skills, perks: Array.from(chosen) });
+      G.newGame({ name: name.slice(0, 6), gender, job, look, skills, perks: Array.from(chosen), diff });
       DS.Events.planDay();
       G.save();
       T.intro().then(() => DS.Game.start());

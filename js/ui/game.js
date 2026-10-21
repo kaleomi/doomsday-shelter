@@ -50,7 +50,7 @@
       UI.bar('💧', me.thirst, 100, 'linear-gradient(90deg,#2b8bdc,#6fcfff)', me.thirst < 20));
     const W = DS.Sim.WEATHER[S.weather ? S.weather.type : '晴'];
     const apoc = S.phase === 'apoc';
-    const cd = apoc ? (S.endless ? '无尽模式' : `目标 100 天`) : `距末日 ${15 - S.day} 天`;
+    const cd = S.daily ? `每日挑战 ${S.day}/${DS.Daily.LEN}` : apoc ? (S.endless ? '无尽模式' : (S.chapter || 1) >= 2 ? '春天篇 · 目标 160 天' : `目标 100 天`) : `距末日 ${15 - S.day} 天`;
     const day = h('div', { class: 'daycard' + (apoc ? ' apoc' : ''), onclick: () => Game.envInfo() },
       h('div', { class: 'w' }, W ? W.icon : ''), h('div', { class: 'd' }, `第${S.day}天`), h('div', { class: 't' }, `${G.dateStr(S.day)} ${G.timeStr()}`), h('div', { class: 'cd' }, cd));
     hudEl.appendChild(h('div', { class: 'hud-top' }, ava, bars, day));
@@ -65,6 +65,7 @@
     if (env.rad > 0) chips.push(h('div', { class: 'chip radc ' + (env.inRad >= 30 ? 'warnc' : ''), onclick: () => Game.envInfo() }, '☢', h('b', null, env.inRad), h('span', { class: 'dim' }, '/' + env.rad)));
     if (S.house.type !== '旧公寓' || apoc) chips.push(h('div', { class: 'chip ' + (S.house.integrity < 40 ? 'warnc' : ''), onclick: () => DS.Panels.house() }, '🧱', h('b', null, S.house.integrity + '%')));
     chips.push(h('div', { class: 'chip', onclick: () => DS.Panels.inventory() }, '📦', h('b', null, G.invVol() + '/' + (G.hstat('cap') > 99999 ? '∞' : G.hstat('cap')))));
+    if (S.disaster) { const D = DS.DISASTERS[S.disaster.type]; chips.unshift(h('div', { class: 'chip warnc dis-chip', onclick: () => DS.Panels.house() }, D.icon, h('b', null, S.disaster.active ? S.disaster.type + '中' : `${S.disaster.type} ${S.disaster.start - S.day}天后`), S.disaster.prepared ? '✓' : '')); }
     hudEl.appendChild(h('div', { class: 'hud-chips' }, chips));
   }
 
@@ -97,25 +98,36 @@
     room.appendChild(h('div', { class: 'light' }));
     room.appendChild(h('div', { class: 'door', style: { left: (Math.floor(cols / 2) * c + 4) + 'px', width: (c - 8) + 'px' } }));
     // 家具
+    const L = Game.layout;
     S.house.furn.forEach((f) => {
       const F = DS.FURNITURE[f.type];
+      const [fw, fh] = G.fdim(f);
       const state = {};
       if (f.type === '壁炉') state.lit = S.fireOn && !S.env.fireOut && S.env.outT < 12 || S.fireOn && S.day >= 11 && !S.env.fireOut;
       if (f.type === '种植箱') state.plots = (f.plots || []).map((p) => ({ prog: p.prog, t: DS.RECIPES.find((r) => r.id === p.rid).t, cold: p.cold }));
       if (f.type === '工作台') state.busy = !!f.job;
       if (f.type === '电脑桌') state.on = G.home().some((m) => m.task && m.task.fid === f.id);
       if (f.type === '监控警报') state.blink = true;
-      const el = h('div', { class: 'furn', style: { left: f.x * c + 'px', top: f.y * c + 'px', width: F.w * c + 'px', height: F.h * c + 'px' }, onclick: () => { DS.Audio.tap(); DS.Panels.furniture(f); }, html: A.furniture(f.type, f.lv, state), title: F.name });
+      const svg = A.furniture(f.type, f.lv, state);
+      const el = h('div', { class: 'furn' + (L && L.sel === f.id ? ' sel' : '') + (L ? ' editing' : ''), style: { left: f.x * c + 'px', top: f.y * c + 'px', width: fw * c + 'px', height: fh * c + 'px' }, onclick: (e) => { e.stopPropagation(); DS.Audio.tap(); if (L) { L.sel = L.sel === f.id ? null : f.id; Game.renderRoom(); return; } DS.Panels.furniture(f); }, html: f.rot ? `<div class="rot" style="width:${F.w * c}px;height:${F.h * c}px">${svg}</div>` : svg, title: F.name });
       if (f.type === '壁炉' && state.lit) el.insertBefore(h('div', { class: 'fire-glow' }), el.firstChild);
       if (f.lv > 1) el.appendChild(h('div', { class: 'flv' }, 'Lv' + f.lv));
       if (f.type === '工作台' && f.job) { const r = DS.RECIPES.find((x) => x.id === f.job.rid); el.appendChild(h('div', { class: 'prog' }, h('i', { style: { width: Math.min(100, f.job.prog / r.t * 100) + '%' } }))); }
       room.appendChild(el);
     });
+    // 布置模式：空格子可点击
+    if (L) {
+      const g = G.grid();
+      for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) {
+        if (g[y][x] && g[y][x] !== L.sel) continue;
+        room.appendChild(h('div', { class: 'cell-hit', style: { left: x * c + 'px', top: y * c + 'px', width: c + 'px', height: c + 'px' }, onclick: (e) => { e.stopPropagation(); Game.layoutMove(x, y); } }));
+      }
+    }
     // 成员
     const grid = G.grid();
     const used = new Set();
     const home = G.home();
-    home.forEach((m, i) => {
+    if (!L) home.forEach((m, i) => {
       let x, y;
       const f = m.task && S.house.furn.find((ff) => ff.id === m.task.fid);
       if (f) {
@@ -134,8 +146,17 @@
       room.appendChild(tk);
       room.appendChild(h('div', { class: 'token-label', style: { left: x + 15 + 'px', top: y + 31 + 'px' } }, m.name + (m.statuses.濒死 ? '💀' : sick ? '🤒' : '')));
     });
+    // 伙伴
+    if (S.pet && !L && !(S.exploring && S.exploring.pet)) {
+      const r = A.rng('pet' + S.day + ':' + S.slot);
+      let tries = 0, gx, gy;
+      do { gx = Math.floor(r() * cols); gy = Math.floor(r() * rows); tries++; } while ((grid[gy][gx] || used.has(gx + ',' + gy)) && tries < 60);
+      const px = gx * c + c / 2 - 13, py = gy * c + c / 2 - 13;
+      room.appendChild(h('div', { class: 'pet-token' + (S.pet.hurt ? ' sick' : ''), style: { left: px + 'px', top: py + 'px' }, onclick: (e) => { e.stopPropagation(); DS.Audio.tap(); DS.ExtUI.pet(); } }, '🐕'));
+      room.appendChild(h('div', { class: 'token-label', style: { left: px + 13 + 'px', top: py + 26 + 'px' } }, S.pet.name));
+    }
     // 气泡
-    (S.bubbles || []).forEach((b) => {
+    if (!L) (S.bubbles || []).forEach((b) => {
       let x, y;
       if (b.anchor.startsWith('furn:')) { const f = S.house.furn.find((ff) => ff.id === b.anchor.slice(5)); if (!f) return; x = (f.x + DS.FURNITURE[f.type].w) * c - 14; y = f.y * c - 14; }
       else if (b.anchor.startsWith('member:')) { const tk = Array.from(room.querySelectorAll('.token')); const idx = home.findIndex((m) => m.id === b.mid); if (idx < 0 || !tk[idx]) return; x = parseFloat(tk[idx].style.left) + 18; y = parseFloat(tk[idx].style.top) - 18; }
@@ -147,7 +168,21 @@
     const tint = hr >= 21 || hr < 5 ? 'rgba(40,55,120,.5)' : hr <= 7 ? 'rgba(255,170,120,.22)' : hr >= 18 ? 'rgba(255,140,90,.28)' : 'transparent';
     room.appendChild(h('div', { class: 'tint', style: { background: tint } }));
     roomWrap.appendChild(room);
+    if (L) roomWrap.appendChild(DS.ExtUI.layoutBar());
+    else if (S.phase !== 'apoc' && S.day <= 14) { const [a, b] = DS.Checklist.progress(); roomWrap.appendChild(h('button', { class: 'checklist-btn' + (a >= b ? ' done' : ''), onclick: () => { DS.Audio.tap(); DS.ExtUI.checklist(); } }, `📋 备战 ${a}/${b}`)); }
     if (snow) snow.setMode(S);
+  };
+  // 布置模式：把选中的家具移到 (x,y)
+  Game.layout = null;
+  Game.layoutMove = function (x, y) {
+    const L = Game.layout; const S = G.S; if (!L || !L.sel) { UI.toast('先点一件家具选中它'); return; }
+    const f = S.house.furn.find((ff) => ff.id === L.sel); if (!f) return;
+    const [w, hh] = G.fdim(f);
+    if (G.fits(x, y, w, hh, f.id)) { f.x = x; f.y = y; DS.Audio.confirm(); }
+    else if (G.fits(x - w + 1, y, w, hh, f.id)) { f.x = x - w + 1; f.y = y; DS.Audio.confirm(); }
+    else if (G.fits(x, y - hh + 1, w, hh, f.id)) { f.x = x; f.y = y - hh + 1; DS.Audio.confirm(); }
+    else { UI.toast('放不下（会挡住门口或和别的家具重叠）'); return; }
+    DS.Sim.refreshEnv(); Game.render();
   };
 
   // ---------------- 侧边按钮 & 导航 ----------------
@@ -162,6 +197,7 @@
     sideEl.append(
       btn('🏠', '安全屋', () => DS.Panels.house(), S.house.integrity < 50 || (S.house.stored || []).length),
       btn('📱', S.unlocked.phone ? '手机' : '日志', () => DS.Panels.phone()),
+      btn('⚡', '安排', () => DS.ExtUI.autoAssign()),
       btn('⚙️', '设置', () => DS.Panels.settings()),
     );
   }
@@ -243,7 +279,7 @@
     }
     DS.Audio.night();
     const inst = DS.Events.pickNight();
-    if (inst) { await Game.runEvent(inst, { night: true }); if (S.ending) return; }
+    if (inst) { inst.night = true; await Game.runEvent(inst, { night: true }); if (S.ending) return; }
     const rep1 = DS.Sim.sleep();
     if (S.ending) return;
     await dayTransition(S.day + 1);
@@ -255,6 +291,7 @@
     DS.Audio.morning();
     DS.Audio.ambient();
     await Game.morningReport(rep, rep1);
+    if (S.pendingReports && S.pendingReports.length) await DS.ExtUI.dispatchReports();
     if (S.pendingRecruit) await Game.recruitCard();
   };
   function dayTransition(day) {
@@ -302,7 +339,9 @@
   Game.handleActions = async function (act, inst) {
     const S = G.S;
     if (act.battle) {
-      const out = await DS.BattleUI.run(act.battle.id, { ctx: inst.ctx, raid: ['战斗', '完整度'].includes(inst.ev.cat) || inst.ev.slot === 'night' });
+      const raid = ['战斗', '完整度'].includes(inst.ev.cat) || inst.ev.slot === 'night';
+      const defense = (inst.night || inst.ev.slot === 'night') && raid && !inst.ctx.explore && S.phase === 'apoc';
+      const out = defense ? await DS.Defense.run(act.battle.id) : await DS.BattleUI.run(act.battle.id, { ctx: inst.ctx, raid });
       if (S.ending) return;
       const br = out.win ? act.battle.win : act.battle.lose;
       if (br) {
@@ -332,7 +371,8 @@
       const who = ev.who && (DS.CONTACTS[ev.who] || DS.STORY_RECRUITS[ev.who]);
       if (ev.who) {
         const sr = DS.STORY_RECRUITS[ev.who];
-        const fake = sr ? { name: ev.who, gender: sr.gender, job: sr.job, look: Object.assign(G.randomLook(sr.gender), sr.look) } : { name: ev.who, gender: /姑|芳|妈|婶|姐/.test(ev.who) ? '女' : '男', job: '拾荒者', look: G.randomLook(/姑|芳/.test(ev.who) ? '女' : '男') };
+        const cg = (DS.CONTACTS[ev.who] && DS.CONTACTS[ev.who].gender) || (/姑|芳|妈|婶|姐|姥/.test(ev.who) ? '女' : '男');
+        const fake = sr ? { name: ev.who, gender: sr.gender, job: sr.job, look: Object.assign(G.randomLook(sr.gender), sr.look) } : { name: ev.who, gender: cg, job: '拾荒者', look: G.randomLook(cg) };
         if (!ev._look) ev._look = fake.look;
         fake.look = ev._look;
         scene.appendChild(h('div', { class: 'speaker' }, h('div', { class: 'av', html: A.avatar(fake) }), h('b', null, ev.who), who && who.role ? h('span', { class: 'muted' }, who.role) : null));
@@ -412,7 +452,12 @@
       h('div', { class: 'statgrid', style: { marginTop: '10px' } }, ['力量', '灵巧', '学识', '运气', '速度', '防御'].map((s) => h('div', { class: 's' }, s, h('b', null, m.stats[s])))),
       h('div', { class: 'col', style: { marginTop: '10px' } }, m.skills.map(([s, q]) => DS.Panels.skillRow(m, s, q))),
       full ? h('div', { class: 'small bad', style: { marginTop: '8px' } }, `安全屋人员栏位已满（${G.memberSlots()}人）。扩建或遣散队员后才能收留。`) : null);
-    const v = await UI.modal({ title: m.story ? '有人想加入' : '幸存者', cat: '招募', catColor: '#16a085', body, buttons: [{ t: '拒绝', v: false }, { t: full ? '栏位已满' : '收留', cls: 'primary' + (full ? ' disabled' : ''), v: true }] });
+    const v = await UI.modal({ title: m.story ? '有人想加入' : '幸存者', cat: '招募', catColor: '#16a085', body, buttons: full && S.members.length > 1 ? [{ t: '拒绝', v: false }, { t: '换掉一名队员', cls: 'primary', v: 'swap' }] : [{ t: '拒绝', v: false }, { t: full ? '栏位已满' : '收留', cls: 'primary' + (full ? ' disabled' : ''), v: true }] });
+    if (v === 'swap') {
+      const old = await DS.ExtUI.pickReplace(m);
+      if (old) { DS.Sim.removeMember(old); G.log(`${old.name}离开了安全屋，${m.name}住了进来。`); UI.toast(`${old.name} 离开了`); }
+      else { if (m.story) G.log(`你拒绝了${m.name}。`); Game.render(); return; }
+    }
     if (v && G.canRecruit()) { S.members.push(m); m.joined = S.day; G.log(`${m.name}加入了安全屋。`, 'good'); UI.toast(`${m.name} 加入了安全屋`, 'good'); DS.Audio.win(); if (S.contacts[m.name] === undefined && DS.CONTACTS[m.name]) S.contacts[m.name] = 30; }
     else if (m.story) { G.log(`你拒绝了${m.name}。`); }
     Game.render();
@@ -420,9 +465,12 @@
 
   // ---------------- 结局 ----------------
   Game.showEnding = function () {
-    const S = G.S; const info = S.endingInfo || {}; const E = DS.ENDINGS.find((e) => e.id === S.ending);
+    const S = G.S; const info = S.endingInfo || {};
     busy = false;
     UI.baseKeys = null;
+    if (S.daily) return DS.ExtUI.dailyEnd();
+    const E = DS.ENDINGS.find((e) => e.id === S.ending);
+    const ch = S.chapter || 1;
     const el = h('div', { class: 'screen ending' },
       h('div', { class: 'big' }, E.icon),
       h('div', { class: 'small muted', style: { letterSpacing: '4px' } }, E.good ? '— 结局达成 —' : '— 你死了 —'),
@@ -432,7 +480,8 @@
       h('div', { class: 'pill', style: { fontSize: '14px', padding: '6px 14px', margin: '6px auto' } }, '🔁 重生点 +' + (info.pts || 0) + (info.first ? '（首次达成翻倍）' : '')),
       h('div', { class: 'small muted', style: { margin: '6px 0 16px' } }, '累计重生点：' + G.meta.points),
       h('div', { class: 'col', style: { width: '100%', maxWidth: '300px', margin: '0 auto' } },
-        E.good && !S.endlessOffered ? h('button', { class: 'btn block', onclick: () => { S.endless = true; S.endlessOffered = true; S.ending = null; S.endingInfo = null; G.save(); Game.start(); } }, '继续生存（无尽模式）') : null,
+        E.good && ch === 1 && S.day >= 100 ? h('button', { class: 'btn block spring-btn', onclick: () => { DS.Spring.start(); G.save(); Game.start(); DS.Audio.win(); } }, '🌱 继续：春天篇（第 101–160 天）') : null,
+        E.good && ch >= 2 && !S.endless ? h('button', { class: 'btn block', onclick: () => { S.endless = true; S.ending = null; S.endingInfo = null; G.save(); Game.start(); } }, '继续生存（无尽模式）') : null,
         h('button', { class: 'btn primary block', onclick: () => DS.Title.create() }, '重生，再来一次'),
         h('button', { class: 'btn block', onclick: () => DS.Title.show() }, '返回标题')));
     UI.screen(el);
@@ -452,6 +501,7 @@
       const hr = S ? G.hour() : 12; const apoc = S && S.day >= 11;
       const g = ctx.createLinearGradient(0, 0, 0, H);
       if (hr >= 21 || hr < 6) { g.addColorStop(0, '#060b18'); g.addColorStop(1, '#0f1a2e'); }
+      else if (S && (S.chapter || 1) >= 2 && S.env.outT > -40) { g.addColorStop(0, '#6f8fa8'); g.addColorStop(1, '#3d5a48'); }
       else if (apoc) { g.addColorStop(0, '#5d6b80'); g.addColorStop(1, '#2b3546'); }
       else { g.addColorStop(0, '#5c8ec4'); g.addColorStop(1, '#2d4a6e'); }
       ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
@@ -470,7 +520,7 @@
     return {
       setMode(S) {
         const w = S.weather ? S.weather.type : '晴';
-        if (S.day < 11) mode = { n: w === '雨' ? 90 : 0, wind: 0, rain: w === '雨' };
+        if (S.day < 11 || ((S.chapter || 1) >= 2 && S.env.outT > -5)) mode = { n: w === '雨' ? 90 : w === '小雪' ? 40 : 0, wind: 0, rain: w === '雨' };
         else mode = { n: w === '暴雪' ? 220 : w === '狂风' ? 160 : w === '小雪' ? 90 : w === '晴' ? 20 : 50, wind: w === '狂风' ? 3 : w === '暴雪' ? 1.5 : 0.3, rain: false };
       },
     };

@@ -10,7 +10,7 @@ const ctx = { window: {}, console };
 ctx.window.window = ctx.window;
 vm.createContext(ctx);
 function load(f) { vm.runInContext(fs.readFileSync(f, 'utf8'), ctx, { filename: f }); }
-['js/data/items.js', 'js/data/world.js', 'js/data/cast.js', 'js/data/status.js', 'js/engine/dsl.js'].forEach((f) => load(path.join(ROOT, f)));
+['js/data/items.js', 'js/data/world.js', 'js/data/cast.js', 'js/data/status.js', 'js/data/extra.js', 'js/engine/dsl.js'].forEach((f) => load(path.join(ROOT, f)));
 ctx.DS = ctx.window.DS; // 浏览器里 window.DS 就是全局 DS
 
 const contentDir = path.join(ROOT, 'js/data/content');
@@ -58,6 +58,14 @@ DS.EVENTS.forEach((ev) => {
   if (usesMember && !hasMemberCond) report(ev, 'E', '使用了 {member} 但 cond 中没有 members>=2 或 job:');
   const usesMfx = /"m\.(stat|hp|energy|hunger|thirst|mood|status|leave|die|loyal|cure)/.test(JSON.stringify(ev.opts || []));
   if (usesMfx && !hasMemberCond) report(ev, 'E', '使用了 m.* 效果但 cond 中没有 members>=2 或 job:');
+  const js = JSON.stringify(ev);
+  const usesPair = /\{member2\}|\{m2他\}|"m2\.|"bond:|bond[<>=]/.test(js);
+  const hasPairCond = (ev.cond || []).some((c) => /^members>=([3-9])/.test(c));
+  if (usesPair && !hasPairCond) report(ev, 'E', '使用了 {member2} / m2.* / bond 但 cond 中没有 members>=3');
+  if (usesPair && ev.pool === 'explore_route') report(ev, 'E', '探索线路事件里不能用 {member2} / bond');
+  const usesPet = /\{pet\}|"pet\.|petloyal/.test(js);
+  if (usesPet && !(ev.cond || []).includes('pet')) report(ev, 'E', '使用了 {pet} / pet.* 但 cond 中没有 pet');
+  if (/"pet:get"/.test(js) && !(ev.cond || []).includes('!pet')) report(ev, 'E', '使用了 pet:get 但 cond 中没有 !pet');
   if (!Array.isArray(ev.opts) || !ev.opts.length) { report(ev, 'E', '缺少 opts'); return; }
   if (ev.opts.length > 4) report(ev, 'W', '选项超过 4 个');
   ev.opts.forEach((o, i) => {

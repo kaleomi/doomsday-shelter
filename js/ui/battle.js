@@ -19,7 +19,8 @@
     }
     const lvBase = ex ? DS.Explore.loc(ex.loc).lv + (S.exploring ? S.exploring.route : 0) : G.threat();
     const V = DS.VEHICLES[S.vehicle];
-    const b = C.create(tpl, team, { lvBase, ctx: ex ? 'explore' : 'home', ram: ex ? V.ram : 0, ramN: ex ? Math.max(1, Math.round(V.seats / 2)) : 0 });
+    const pet = ex ? !!(S.exploring && S.exploring.pet) : true;
+    const b = opts.prebuilt || C.create(tpl, team, { lvBase, ctx: ex ? 'explore' : 'home', ram: ex ? V.ram : 0, ramN: ex ? Math.max(1, Math.round(V.seats / 2)) : 0, pet });
     return new Promise((resolve) => {
       const layer = UI.layer();
       const scr = h('div', { class: 'screen battle', style: { position: 'absolute' } });
@@ -27,10 +28,10 @@
       const foesEl = h('div', { class: 'bside' }), allyEl = h('div', { class: 'bside' });
       const logEl = h('div', { class: 'blog' });
       const spdBtn = h('button', { class: 'btn small' });
-      const head = h('div', { class: 'battle-h' }, h('div', { class: 'ttl' }, '⚔ ' + b.name), spdBtn);
+      const head = h('div', { class: 'battle-h' }, h('div', { class: 'ttl' }, '⚔ ' + (opts.title || b.name)), spdBtn);
       const ctl = h('div', { class: 'bctl' },
         h('button', { class: 'btn grow', onclick: () => itemMenu() }, '💊 道具'),
-        h('button', { class: 'btn grow', onclick: () => tryRetreat() }, '🏃 撤退'),
+        h('button', { class: 'btn grow', onclick: () => tryRetreat() }, opts.noRetreat ? '🏳 放弃' : '🏃 撤退'),
         h('button', { class: 'btn primary grow', onclick: () => { skip = true; } }, '⏩ 跳过'));
       scr.append(head, foesEl, h('div', { class: 'vs' }, 'V S'), allyEl, logEl, ctl);
       let skip = false, paused = false, ended = false;
@@ -39,9 +40,9 @@
       spdBtn.onclick = () => { const s = G.meta.settings; s.battleSpeed = s.battleSpeed === 1 ? 2 : s.battleSpeed === 2 ? 4 : 1; G.saveMeta(); setSpd(); };
       setSpd();
       function unitCard(u) {
-        const face = u.side === 'a' ? h('div', { class: 'face', html: A.avatar(u.m) }) : h('div', { class: 'face' }, u.icon);
+        const face = u.side === 'a' && u.m ? h('div', { class: 'face', html: A.avatar(u.m) }) : h('div', { class: 'face' + (u.pet ? ' petface' : '') }, u.icon);
         const el = h('div', { class: 'bunit ' + (u.side === 'a' ? 'ally' : 'foe'), onclick: () => { if (u.side === 'f' && u.alive) { b.focus = u.uid; DS.Audio.tap(); renderUnits(); } } },
-          u.boss ? h('div', { class: 'boss' }, 'BOSS') : null, face, h('div', { class: 'nm' }, u.name + (u.lv ? ' Lv' + u.lv : '')), h('div', { class: 'hpb' }, h('i')), h('div', { class: 'hpt' }));
+          u.boss ? h('div', { class: 'boss' }, 'BOSS') : null, u.pos ? h('div', { class: 'boss posb' }, DS.DEF_POS[u.pos].icon + u.pos) : null, face, h('div', { class: 'nm' }, u.name + (u.lv ? ' Lv' + u.lv : '')), h('div', { class: 'hpb' }, h('i')), h('div', { class: 'hpt' }));
         unitEls[u.uid] = el; return el;
       }
       b.foes.forEach((u) => foesEl.appendChild(unitCard(u)));
@@ -57,7 +58,7 @@
       }
       function addLog(text, cls) { if (!text) return; logEl.insertBefore(h('div', { class: cls || '' }, text), logEl.firstChild); }
       b.log.forEach((r) => addLog(r.t, 'n'));
-      addLog(`遭遇 ${b.name}！点击敌人可以集火。`, 'n');
+      addLog(opts.intro || `遭遇 ${b.name}！点击敌人可以集火。`, 'n');
       renderUnits();
       function floatDmg(uid, text, cls) { const el = unitEls[uid]; if (!el) return; const d = h('div', { class: 'dmg ' + (cls || '') }, text); el.appendChild(d); setTimeout(() => d.remove(), 900); if (cls !== 'heal' && cls !== 'miss') { el.classList.remove('shake'); void el.offsetWidth; el.classList.add('shake'); } }
       function play(rec) {
@@ -87,6 +88,7 @@
       }
       async function tryRetreat() {
         if (b.over || ended) return;
+        if (opts.noRetreat) { if (await UI.confirm('放弃抵抗，躲进里屋？来犯者会拿走一部分物资、破坏安全屋。', '放弃')) { b.over = true; b.win = false; b.fled = true; } return; }
         paused = true;
         const r = C.retreat(b);
         if (r.ok) { addLog('你们成功撤退了！', 'n'); DS.Audio.confirm(); }
@@ -111,6 +113,7 @@
       function finish() {
         if (ended) return; ended = true;
         Object.values(unitEls).forEach((e) => e.classList.remove('acting'));
+        if (opts.noFinish) { setTimeout(() => { layer.remove(); resolve({ b, win: b.win, fled: !!b.fled }); }, b.win ? 700 : 1000); (b.win ? DS.Audio.win : DS.Audio.lose)(); return; }
         const out = C.finish(b, { explore: ex, home: !ex && opts.raid !== false && (opts.raid || !opts.ctx) });
         if (out.meDead) {
           DS.Audio.lose();

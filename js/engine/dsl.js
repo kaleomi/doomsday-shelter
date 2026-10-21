@@ -6,7 +6,7 @@
   const NEEDS = ['hp', 'energy', 'hunger', 'thirst', 'mood'];
   const UNLOCKS = ['cook', 'farm', 'craft', 'recruit', 'explore', 'phone', 'blackmarket', 'shop', 'market', 'mods', 'vehicle'];
   const HOUSE_KEYS = ['def', 'integrity', 'insul', 'antirad', 'cap'];
-  const LOOT_CATS = ['食物', '食材', '材料', '医疗', '武器1', '武器2', '武器3', '防具1', '防具2', '防具3', '鞋子1', '鞋子2', '鞋子3'];
+  const LOOT_CATS = ['食物', '食材', '材料', '医疗', '百货', '武器1', '武器2', '武器3', '防具1', '防具2', '防具3', '鞋子1', '鞋子2', '鞋子3'];
   const CMP = /^(>=|<=|>|<|=)/;
 
   function num(s) { const n = Number(s); return isNaN(n) ? null : n; }
@@ -29,6 +29,12 @@
     if (s.startsWith('!')) { neg = true; s = s.slice(1); }
     let m;
     if (s === 'apoc') return { k: 'apoc', neg };
+    if (s === 'pet') return { k: 'pet', neg };
+    if ((m = s.match(/^disaster:(.+)$/))) return { k: 'disaster', v: m[1].split('|'), neg };
+    if ((m = s.match(/^prep:(.+)$/))) return { k: 'prep', v: m[1], neg };
+    if ((m = s.match(/^forecast:(.+)$/))) return { k: 'forecast', v: m[1].split('|'), neg };
+    if ((m = s.match(/^diff:(.+)$/))) return { k: 'diff', v: m[1].split('|'), neg };
+    if (s === 'daily') return { k: 'daily', neg };
     if ((m = s.match(/^flag:([^><=!]+)$/))) return { k: 'flag', name: m[1], neg };
     if ((m = s.match(/^flag:(.+?)(>=|<=|>|<|=)(-?\d+)$/))) return { k: 'flagn', name: m[1], op: m[2], v: +m[3], neg };
     if ((m = s.match(/^house:(.+)$/))) return { k: 'house', v: m[1].split('|'), neg };
@@ -45,7 +51,7 @@
     if ((m = s.match(/^mod:(.+)$/))) { const c = splitCmp(m[1]); if (!c) return { err: '格式应为 mod:防御>=2' }; return { k: 'mod', mod: c[0], op: c[1], v: +c[2], neg }; }
     if ((m = s.match(/^contact:(.+)$/))) { const c = splitCmp(m[1]); if (!c) return { err: '格式应为 contact:周恪>=20' }; return { k: 'aff', who: c[0], op: c[1], v: +c[2], neg }; }
     const c = splitCmp(s);
-    if (c && ['money', 'crystal', 'intel', 'mood', 'hp', 'members', 'integrity', 'temp', 'outtemp', 'rad', 'day', 'rebirth', 'energy', 'hunger', 'thirst', 'level'].includes(c[0])) {
+    if (c && ['money', 'crystal', 'intel', 'mood', 'hp', 'members', 'integrity', 'temp', 'outtemp', 'rad', 'day', 'rebirth', 'energy', 'hunger', 'thirst', 'level', 'chapter', 'petloyal', 'bond'].includes(c[0])) {
       let v = c[2]; let pct = false;
       if (String(v).endsWith('%')) { pct = true; v = v.slice(0, -1); }
       return { k: 'var', name: c[0], op: c[1], v: +v, pct, neg };
@@ -60,13 +66,18 @@
     if (s === 'apoc') return { k: 'apoc' };
     if (s === 'm.leave') return { k: 'mleave' };
     if (s === 'm.die') return { k: 'mdie' };
+    if (s === 'pet:get') return { k: 'petget' };
+    if (s === 'pet.leave') return { k: 'petleave' };
+    if ((m = s.match(/^pet\.(loyal|hp|hunger):([+-]\d+)(%?)$/))) return { k: 'pet', key: m[1], v: +m[2], pct: !!m[3] };
+    if ((m = s.match(/^bond:([+-]\d+)$/))) return { k: 'bond', v: +m[1] };
+    if ((m = s.match(/^prep:(.+)$/))) return { k: 'prep', v: m[1] };
     if ((m = s.match(/^(money|crystal|intel):([+-]\d+)$/))) return { k: 'res', res: m[1], v: +m[2] };
     if ((m = s.match(/^item:(.+?):([+-]\d+)$/))) return { k: 'item', item: m[1], v: +m[2] };
     if ((m = s.match(/^loot:(.+?):(\d+)$/))) return { k: 'loot', cat: m[1], v: +m[2] };
-    if ((m = s.match(/^(m\.|team\.)?stat:(.+?):([+-]\d+)$/))) return { k: 'stat', who: m[1] ? m[1].slice(0, -1) : 'me', stat: m[2], v: +m[3] };
-    if ((m = s.match(/^(m\.|team\.)?(hp|energy|hunger|thirst|mood):([+-]\d+)(%?)$/))) return { k: 'need', who: m[1] ? m[1].slice(0, -1) : 'me', need: m[2], v: +m[3], pct: !!m[4] };
+    if ((m = s.match(/^(m2\.|m\.|team\.)?stat:(.+?):([+-]\d+)$/))) return { k: 'stat', who: m[1] ? m[1].slice(0, -1) : 'me', stat: m[2], v: +m[3] };
+    if ((m = s.match(/^(m2\.|m\.|team\.)?(hp|energy|hunger|thirst|mood):([+-]\d+)(%?)$/))) return { k: 'need', who: m[1] ? m[1].slice(0, -1) : 'me', need: m[2], v: +m[3], pct: !!m[4] };
     if ((m = s.match(/^m\.loyal:([+-]\d+)$/))) return { k: 'need', who: 'm', need: 'mood', v: +m[1], pct: false };
-    if ((m = s.match(/^(m\.)?status:(rnd:)?(.+)$/))) return { k: 'status', who: m[1] ? 'm' : (m[2] ? 'rnd' : 'me'), st: m[3] };
+    if ((m = s.match(/^(m2\.|m\.)?status:(rnd:)?(.+)$/))) return { k: 'status', who: m[1] ? m[1].slice(0, -1) : (m[2] ? 'rnd' : 'me'), st: m[3] };
     if ((m = s.match(/^(m\.|team\.)?cure:(.+)$/))) return { k: 'cure', who: m[1] ? m[1].slice(0, -1) : 'me', st: m[2] };
     if ((m = s.match(/^flag:([^:]+)$/))) return { k: 'flag', name: m[1], v: true };
     if ((m = s.match(/^flag:(.+?):([+-]?\d+)$/))) return { k: 'flagn', name: m[1], v: +m[2], add: /^[+-]/.test(m[2]) };
@@ -104,6 +115,9 @@
     if (p.k === 'mod' && !DS.MODS[p.mod]) e.push('未知改造: ' + p.mod);
     if (p.k === 'aff' && !DS.CONTACTS[p.who]) e.push('未知联系人: ' + p.who);
     if (p.k === 'ending' && !DS.ENDINGS.find((x) => x.id === p.v)) e.push('未知结局: ' + p.v);
+    if ((p.k === 'disaster' || p.k === 'forecast') && p.v.some((d) => !DS.DISASTERS[d])) e.push('未知天灾: ' + p.v.join('|'));
+    if (p.k === 'prep' && !DS.DISASTERS[p.v]) e.push('未知天灾: ' + p.v);
+    if (p.k === 'diff' && p.v.some((d) => !DS.DIFFS[d])) e.push('未知难度: ' + p.v.join('|'));
     return e;
   }
   function checkFx(f, ctx) {
@@ -129,6 +143,7 @@
     if (p.k === 'battle' && !DS.BATTLES[p.v]) e.push('未知战斗模板: ' + p.v);
     if (p.k === 'ending' && !DS.ENDINGS.find((x) => x.id === p.v)) e.push('未知结局: ' + p.v);
     if ((p.k === 'sched' || p.k === 'goto') && ctx && ctx.ids && !ctx.ids.has(p.id)) e.push('引用了不存在的事件: ' + p.id);
+    if (p.k === 'prep' && !DS.DISASTERS[p.v]) e.push('未知天灾: ' + p.v);
     return e;
   }
 

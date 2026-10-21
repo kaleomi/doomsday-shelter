@@ -349,7 +349,7 @@
   };
 
   // ---------------- 城市地图 ----------------
-  A.PIN_POS = { hospital: [30, 68], market: [56, 74], defense: [20, 46], hotel: [64, 52], pharma: [80, 66], furniture: [42, 38], agri: [84, 30], factory: [16, 22], metro: [52, 22], villa: [74, 12] };
+  A.PIN_POS = { hospital: [30, 68], market: [56, 74], defense: [20, 46], hotel: [64, 52], pharma: [80, 66], furniture: [42, 38], agri: [84, 30], factory: [16, 22], metro: [52, 22], villa: [74, 12], riverbank: [10, 62], greenhouse: [88, 47], downtown: [40, 55] };
   A.HOME_POS = [44, 86];
   A.cityMap = function (apoc) {
     const W = 400, H = 600; const r = rng('city');

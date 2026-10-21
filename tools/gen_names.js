@@ -7,7 +7,7 @@ const ROOT = path.join(__dirname, '..');
 const ctx = { window: {}, console };
 ctx.window.window = ctx.window;
 vm.createContext(ctx);
-['js/data/items.js', 'js/data/world.js', 'js/data/cast.js', 'js/data/status.js'].forEach((f) => vm.runInContext(fs.readFileSync(path.join(ROOT, f), 'utf8'), ctx));
+['js/data/items.js', 'js/data/world.js', 'js/data/cast.js', 'js/data/status.js', 'js/data/extra.js'].forEach((f) => vm.runInContext(fs.readFileSync(path.join(ROOT, f), 'utf8'), ctx));
 const DS = ctx.window.DS;
 const byCat = {};
 Object.values(DS.ITEMS).forEach((it) => (byCat[it.cat] = byCat[it.cat] || []).push(it.name));

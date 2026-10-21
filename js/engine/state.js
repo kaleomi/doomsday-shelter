@@ -4,8 +4,9 @@
   const U = DS.U;
   const G = (DS.G = DS.G || {});
 
-  const SAVE_KEY = 'ds_save_v1';
   const META_KEY = 'ds_meta_v1';
+  // 存档位：1/2/3 + 每日挑战（第 1 格沿用旧版的键，老存档不会丢）
+  G.SLOT_KEYS = { 1: 'ds_save_v1', 2: 'ds_save_v1_s2', 3: 'ds_save_v1_s3', daily: 'ds_save_daily' };
   G.SLOTS = [6, 9, 12, 15, 18, 21];
   G.START_DATE = new Date(2049, 7, 1); // 2049-08-01
 
@@ -15,15 +16,53 @@
   G.saveMeta = () => U.store.set(META_KEY, G.meta);
 
   // ---------------- 存读档 ----------------
-  G.hasSave = () => !!U.store.get(SAVE_KEY, null);
-  G.save = () => { if (G.S && !G.S.ending) U.store.set(SAVE_KEY, G.S); };
-  G.load = () => { const s = U.store.get(SAVE_KEY, null); if (s) { G.S = migrate(s); return true; } return false; };
-  G.clearSave = () => U.store.del(SAVE_KEY);
+  G.slot = G.meta.lastSlot || 1;
+  const key = (slot) => G.SLOT_KEYS[slot || G.slot] || G.SLOT_KEYS[1];
+  G.useSlot = (slot) => { G.slot = slot; if (slot !== 'daily') { G.meta.lastSlot = slot; G.saveMeta(); } };
+  G.hasSave = (slot) => !!U.store.get(key(slot), null);
+  G.anySave = () => [1, 2, 3].some((k) => G.hasSave(k));
+  G.save = () => { if (G.S && !G.S.ending) { G.S.savedAt = Date.now(); if (!U.store.set(key(), G.S)) { trimForSpace(G.S); U.store.set(key(), G.S); } } };
+  G.load = (slot) => { if (slot) G.useSlot(slot); const s = U.store.get(key(), null); if (s) { G.S = migrate(s); return true; } return false; };
+  G.clearSave = (slot) => U.store.del(key(slot));
+  G.slotInfo = function (slot) {
+    const s = U.store.get(key(slot), null); if (!s || !s.members || !s.members[0]) return null;
+    return { name: s.members[0].name, job: s.members[0].job, day: s.day, house: s.house.type, diff: s.diff || '标准', chapter: s.chapter || 1, members: s.members.length, savedAt: s.savedAt || 0, daily: s.daily ? s.daily.date : null };
+  };
+  function trimForSpace(s) { s.log = s.log.slice(-120); s.chats = s.chats.slice(-40); }
   function migrate(s) {
     s.flags = s.flags || {}; s.sched = s.sched || []; s.bubbles = s.bubbles || []; s.chats = s.chats || [];
     s.explore = s.explore || { done: {}, locs: [], runs: 0 };
+    s.diff = s.diff || '标准'; s.chapter = s.chapter || 1; s.bonds = s.bonds || {}; s.armory = s.armory || {}; s.dispatch = s.dispatch || [];
+    if (s.seed === undefined) s.seed = Math.floor(Math.random() * 1e9);
+    if (s.endless && s.day <= 100 && s.chapter === 1) s.endless = true;
     return s;
   }
+  G.migrate = migrate;
+
+  // 存档码：gzip + base64（浏览器不支持压缩时退回纯 base64）
+  const b64enc = (bytes) => { let bin = ''; for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000)); return btoa(bin); };
+  const b64dec = (str) => { const bin = atob(str); const out = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i); return out; };
+  async function pipe(bytes, stream) { const s = new Blob([bytes]).stream().pipeThrough(stream); return new Uint8Array(await new Response(s).arrayBuffer()); }
+  G.exportCode = async function (slot) {
+    const s = U.store.get(key(slot), null); if (!s) return null;
+    const bytes = new TextEncoder().encode(JSON.stringify(s));
+    if (typeof CompressionStream !== 'undefined') { try { return 'DSZ1:' + b64enc(await pipe(bytes, new CompressionStream('gzip'))); } catch (e) { /* fallthrough */ } }
+    return 'DSJ1:' + b64enc(bytes);
+  };
+  G.importCode = async function (code, slot) {
+    code = String(code || '').trim().replace(/\s+/g, '');
+    let json;
+    try {
+      if (code.startsWith('DSZ1:')) { if (typeof DecompressionStream === 'undefined') return '这个浏览器不支持压缩存档码'; json = new TextDecoder().decode(await pipe(b64dec(code.slice(5)), new DecompressionStream('gzip'))); }
+      else if (code.startsWith('DSJ1:')) json = new TextDecoder().decode(b64dec(code.slice(5)));
+      else if (code.startsWith('{')) json = code;
+      else return '存档码格式不对';
+      const s = JSON.parse(json);
+      if (!s || !Array.isArray(s.members) || !s.members.length || typeof s.day !== 'number' || !s.house) return '存档内容不完整';
+      if (!U.store.set(key(slot), s)) return '浏览器存储空间不足';
+      return null;
+    } catch (e) { return '存档码损坏或不完整，请检查是否复制全了'; }
+  };
 
   // ---------------- 日期 ----------------
   G.dateStr = (day) => { const d = new Date(G.START_DATE.getTime() + (day - 1) * 86400000); return `${d.getMonth() + 1}月${d.getDate()}日`; };
@@ -36,7 +75,7 @@
   G.byId = (id) => G.S.members.find((m) => m.id === id);
   G.home = () => G.S.members.filter((m) => !m.away);
 
-  G.gearOf = (m, slot) => (m.gear[slot] ? DS.ITEMS[m.gear[slot]] : null);
+  G.gearOf = (m, slot) => (m.gear[slot] ? (DS.Armory ? DS.Armory.eff(m.gear[slot]) : DS.ITEMS[m.gear[slot]]) : null);
   G.skillVal = (m, name) => {
     let best = 0;
     (m.skills || []).forEach(([s, q]) => { if (s === name) { const sk = DS.SKILLS[s]; best = Math.max(best, sk.v * DS.QUALITY[q] * (1 + (m.lv - 1) * 0.05)); } });
@@ -48,13 +87,14 @@
   G.stat = (m, s) => {
     let v = m.stats[s] || 0;
     ['武器', '防具', '鞋子'].forEach((sl) => { const g = G.gearOf(m, sl); if (!g) return; const map = { 力量: 'str', 灵巧: 'agi', 学识: 'int', 速度: 'spd', 运气: 'luck', 防御: 'def' }; v += g[map[s]] || 0; });
+    if (s === '运气' && m.id === 'me' && DS.Ext) v += DS.Ext.mut('luck', 0);
     return Math.round(v * (s === '运气' ? 1 : G.statMul(m)));
   };
   G.maxHp = (m) => {
     const j = DS.JOBS[m.job];
     let hp = j.base.hp + (m.lv - 1) * j.grow.hp + (m.hpBonus || 0);
     ['防具', '鞋子'].forEach((sl) => { const g = G.gearOf(m, sl); if (g && g.hp) hp += g.hp; });
-    hp *= 1 + G.skillVal(m, '健壮') + (m.id === 'me' ? 0.25 : 0);
+    hp *= 1 + G.skillVal(m, '健壮') + (m.id === 'me' ? 0.25 + (DS.Ext ? DS.Ext.mut('meHp', 0) : 0) : 0);
     return Math.round(hp);
   };
   G.coldResist = (m) => { let r = 0; ['防具', '鞋子'].forEach((sl) => { const g = G.gearOf(m, sl); if (g && g.cold) r += g.cold; }); return Math.min(0.8, r); };
@@ -63,7 +103,7 @@
     const w = G.gearOf(m, '武器');
     return Math.round(G.stat(m, '力量') * 3 + G.stat(m, '灵巧') * 2 + G.stat(m, '速度') + (w ? w.atk * 6 : 0) + G.maxHp(m) / 5 + m.lv * 4);
   };
-  G.expNeed = (lv) => 40 + lv * 35;
+  G.expNeed = (lv) => 30 + lv * 25;
 
   function rollQuality(forceS) {
     if (forceS) return 'S';
@@ -137,7 +177,7 @@
     const r = DS.STORY_RECRUITS[name];
     return G.makeMember({ name, gender: r.gender, age: r.age, job: r.job, title: r.title, skills: r.skills.map((x) => x.slice()), story: true, bio: r.bio, look: Object.assign(randomLook(r.gender), r.look), lv: U.clamp(Math.round(G.threat() * 0.8), 1, 12), mood: 70 });
   };
-  G.memberSlots = () => { const S = G.S; const H = DS.HOUSES[S.house.type]; return H.slots + (S.house.mods.扩建 || 0); };
+  G.memberSlots = () => { const S = G.S; const H = DS.HOUSES[S.house.type]; return Math.max(0, H.slots + (S.house.mods.扩建 || 0) + (DS.Ext ? DS.Ext.mut('slots', 0) : 0)); };
   G.canRecruit = () => G.S.members.length - 1 < G.memberSlots();
 
   // ---------------- 安全屋派生属性 ----------------
@@ -148,7 +188,9 @@
     if (key === 'antirad') return U.clamp(H.antirad + (md.防辐射 || 0) * DS.MODS.防辐射.eff.antirad + (b.antirad || 0), 0, 0.97);
     if (key === 'def') {
       let d = H.def + (md.防御 || 0) * DS.MODS.防御.eff.def + (b.def || 0);
-      S.house.furn.forEach((f) => { const F = DS.FURNITURE[f.type]; if (F.passive && F.passive.def) d += F.passive.def + (f.lv - 1) * ((F.lv && F.lv.def) || 0); });
+      const off = DS.Disaster && DS.Disaster.devicesOff();
+      S.house.furn.forEach((f) => { const F = DS.FURNITURE[f.type]; if (F.passive && F.passive.def && !(off && f.type === '监控警报')) d += F.passive.def + (f.lv - 1) * ((F.lv && F.lv.def) || 0); });
+      if (DS.Layout) d += DS.Layout.sum('def');
       return Math.max(0, Math.round(d));
     }
     if (key === 'cap') {
@@ -161,6 +203,7 @@
     if (key === 'comfort') {
       let c = H.comfort;
       S.house.furn.forEach((f) => { const F = DS.FURNITURE[f.type]; c += (F.comfort || 0) * (1 + 0.2 * (f.lv - 1)); });
+      if (DS.Layout) c += DS.Layout.sum('comfort');
       return Math.round(c);
     }
     if (key === 'rows') return H.h + (md.扩建 || 0);
@@ -177,7 +220,7 @@
     const it = DS.ITEMS[name]; if (!it || n <= 0) return 0;
     let can = n;
     if (!force) { const free = G.freeVol(); can = Math.max(0, Math.min(n, Math.floor(free / (it.vol || 1)))); }
-    if (can > 0) G.S.inv[name] = (G.S.inv[name] || 0) + can;
+    if (can > 0) { G.S.inv[name] = (G.S.inv[name] || 0) + can; if (DS.Ach) DS.Ach.seeItem(name); }
     return can;
   };
   G.removeItem = function (name, n) {
@@ -195,23 +238,29 @@
   G.grid = function () {
     const S = G.S; const cols = G.hstat('cols'), rows = G.hstat('rows');
     const g = Array.from({ length: rows }, () => Array(cols).fill(null));
-    S.house.furn.forEach((f) => { const F = DS.FURNITURE[f.type]; for (let y = 0; y < F.h; y++) for (let x = 0; x < F.w; x++) if (g[f.y + y] && f.x + x < cols) g[f.y + y][f.x + x] = f.id; });
+    S.house.furn.forEach((f) => { const [fw, fh] = G.fdim(f); for (let y = 0; y < fh; y++) for (let x = 0; x < fw; x++) if (g[f.y + y] && f.x + x < cols) g[f.y + y][f.x + x] = f.id; });
     return g;
   };
-  G.findSpot = function (type) {
-    const F = DS.FURNITURE[type]; const g = G.grid(); const rows = g.length, cols = g[0].length;
-    for (let y = 0; y + F.h <= rows; y++) for (let x = 0; x + F.w <= cols; x++) {
-      let ok = true;
-      for (let yy = 0; yy < F.h && ok; yy++) for (let xx = 0; xx < F.w && ok; xx++) if (g[y + yy][x + xx]) ok = false;
-      // 留出一条通道：不占满最后一排的门口格
-      if (ok && y + F.h === rows && x <= Math.floor(cols / 2) && x + F.w > Math.floor(cols / 2)) ok = false;
-      if (ok) return { x, y };
-    }
+  G.fdim = (f) => { const F = DS.FURNITURE[f.type]; return f.rot ? [F.h, F.w] : [F.w, F.h]; };
+  // 能否把家具（宽 w 高 h）放在 x,y；ignore = 正在移动的那件
+  G.fits = function (x, y, w, h, ignore) {
+    const g = G.grid(); const rows = g.length, cols = g[0].length;
+    if (x < 0 || y < 0 || x + w > cols || y + h > rows) return false;
+    for (let yy = 0; yy < h; yy++) for (let xx = 0; xx < w; xx++) { const c = g[y + yy][x + xx]; if (c && c !== ignore) return false; }
+    // 留出一条通道：不占满最后一排的门口格
+    if (y + h === rows && x <= Math.floor(cols / 2) && x + w > Math.floor(cols / 2)) return false;
+    return true;
+  };
+  G.findSpot = function (type, rot) {
+    const F = DS.FURNITURE[type]; const w = rot ? F.h : F.w, hh = rot ? F.w : F.h; const rows = G.hstat('rows'), cols = G.hstat('cols');
+    for (let y = 0; y + hh <= rows; y++) for (let x = 0; x + w <= cols; x++) if (G.fits(x, y, w, hh)) return { x, y };
     return null;
   };
   G.placeFurniture = function (type) {
-    const spot = G.findSpot(type); if (!spot) return null;
-    const f = { id: U.uid(), type, x: spot.x, y: spot.y, lv: 1 };
+    let rot = false; let spot = G.findSpot(type);
+    if (!spot && DS.FURNITURE[type].w !== DS.FURNITURE[type].h) { spot = G.findSpot(type, true); rot = true; }
+    if (!spot) return null;
+    const f = { id: U.uid(), type, x: spot.x, y: spot.y, lv: 1 }; if (rot) f.rot = true;
     if (DS.FURNITURE[type].job === 'farm') f.plots = [];
     if (DS.FURNITURE[type].job === 'craft') f.job = null;
     G.S.house.furn.push(f);
@@ -223,12 +272,12 @@
     // 换房/扩建后重新排布（大件优先）
     const S = G.S; const old = S.house.furn.slice().sort((a, b) => DS.FURNITURE[b.type].w * DS.FURNITURE[b.type].h - DS.FURNITURE[a.type].w * DS.FURNITURE[a.type].h);
     S.house.furn = []; const lost = [];
-    old.forEach((f) => { const spot = G.findSpot(f.type); if (spot) { f.x = spot.x; f.y = spot.y; S.house.furn.push(f); } else lost.push(f); });
+    old.forEach((f) => { let spot = G.findSpot(f.type, !!f.rot); if (!spot) { spot = G.findSpot(f.type, !f.rot); if (spot) f.rot = !f.rot; } if (spot) { f.x = spot.x; f.y = spot.y; S.house.furn.push(f); } else lost.push(f); });
     return lost;
   };
 
   // ---------------- 威胁等级 ----------------
-  G.threat = () => { const d = G.S ? G.S.day : 1; return d <= 15 ? 1 : U.clamp(1 + Math.floor((d - 15) / 8), 1, 14); };
+  G.threat = () => { const d = G.S ? G.S.day : 1; return d <= 15 ? 1 : U.clamp(1 + Math.floor((d - 15) / 8), 1, G.S && G.S.chapter >= 2 ? 17 : 14); };
 
   // ---------------- 新游戏 ----------------
   G.newGame = function (o) {
@@ -244,6 +293,8 @@
       env: {}, weather: null, market: null, deadList: [], perks: o.perks || [], kills: 0, battles: 0,
       stats: { events: 0, crafted: 0, cooked: 0, harvested: 0, explored: 0 },
       ending: null, endless: false, rebirth: G.meta.runs, lastNight: null,
+      diff: o.diff || '标准', chapter: 1, seed: o.seed !== undefined ? o.seed : Math.floor(Math.random() * 1e9), daily: o.daily || null, mutators: o.mutators || [],
+      bonds: {}, armory: {}, dispatch: [], pet: null, disaster: null,
     };
     G.S = S;
     const me = G.makeMember({ id: 'me', name: o.name, gender: o.gender, job: o.job, title: o.title || '重生者', skills: o.skills, look: o.look, jitter: false, mood: 72 });

@@ -6,6 +6,7 @@
 
   // ---------------- 环境 ----------------
   function baseOutT(day) {
+    if (day > 100 && (G.S.chapter || 1) >= 2) return DS.Spring.outT(day);
     if (day <= 7) return 27 + (day % 3) - 1;
     const pre = { 8: 19, 9: 13, 10: 7, 11: -8, 12: -18, 13: -26, 14: -33, 15: -42 };
     if (pre[day] !== undefined) return pre[day];
@@ -14,7 +15,7 @@
     if (day <= 75) return -108 - Math.sin(((day - 60) / 15) * Math.PI) * 10;
     return -95 + Math.sin(day * 0.7) * 4;
   }
-  function baseRad(day) { if (day < 18) return 0; return Math.min(160, 15 + (day - 18) * 1.5); }
+  function baseRad(day) { if (day < 18) return 0; if (day > 100 && (G.S.chapter || 1) >= 2) return DS.Spring.rad(day); return Math.min(160, 15 + (day - 18) * 1.5); }
   const WEATHER = {
     晴: { icon: '☀️', t: 4, r: 0 }, 阴: { icon: '☁️', t: -2, r: 0 }, 雨: { icon: '🌧️', t: -3, r: 0 }, 雾: { icon: '🌫️', t: -3, r: 5 },
     小雪: { icon: '🌨️', t: -4, r: 6 }, 暴雪: { icon: '❄️', t: -8, r: 12 }, 狂风: { icon: '🌬️', t: -6, r: 8 },
@@ -22,21 +23,27 @@
   Sim.WEATHER = WEATHER;
   function rollWeather(day) {
     let tbl;
-    if (day <= 9) tbl = { 晴: 55, 阴: 30, 雨: 15 };
+    const spring = day > 100 && (G.S.chapter || 1) >= 2;
+    const st = spring ? DS.Spring.outT(day) : 0;
+    if (spring && st < -20) tbl = { 阴: 30, 小雪: 26, 雾: 20, 晴: 16, 狂风: 8 };
+    else if (spring && st < 2) tbl = { 阴: 30, 雾: 24, 晴: 26, 小雪: 20 };
+    else if (spring) tbl = { 晴: 34, 阴: 22, 雨: 30, 雾: 14 };
+    else if (day <= 9) tbl = { 晴: 55, 阴: 30, 雨: 15 };
     else if (day <= 14) tbl = { 阴: 35, 小雪: 35, 狂风: 20, 雾: 10 };
     else if (day >= 60 && day <= 75) tbl = { 暴雪: 50, 狂风: 25, 阴: 15, 小雪: 10 };
     else tbl = { 晴: 22, 阴: 26, 雾: 10, 小雪: 16, 暴雪: 14, 狂风: 12 };
-    return U.wpick(Object.keys(tbl), (k) => tbl[k]);
+    return DS.Ext.wpickR(DS.Ext.rng('w' + day), Object.keys(tbl), (k) => tbl[k]);
   }
   Sim.computeEnv = function (newDay) {
     const S = G.S;
     if (newDay || !S.weather) {
       const w = rollWeather(S.day);
-      S.weather = { type: w, noise: U.ri(-3, 3) };
+      S.weather = { type: w, noise: Math.floor(DS.Ext.rng('n' + S.day)() * 7) - 3 };
     }
     const w = WEATHER[S.weather.type];
-    const outT = Math.round(baseOutT(S.day) + w.t + S.weather.noise);
-    const rad = S.day < 18 ? 0 : Math.round(baseRad(S.day) + w.r);
+    const tOff = S.day >= 11 ? DS.Ext.k('temp') : 0;
+    const outT = Math.round(baseOutT(S.day) + w.t + S.weather.noise + tOff + DS.Disaster.tempOff());
+    const rad = S.day < 18 ? 0 : Math.round((baseRad(S.day) + w.r) * DS.Disaster.radMul() * DS.Ext.k('rad') + DS.Disaster.radAdd());
     S.env.outT = outT; S.env.rad = rad;
     S.env.inT = Sim.indoorTemp(); S.env.inRad = Math.round(rad * (1 - G.hstat('antirad')));
   };
@@ -61,7 +68,7 @@
     const it = DS.ITEMS[name]; if (!it) return null;
     const S = G.S; const notes = [];
     const e = it.eat || {};
-    const tableBonus = (G.furnOf('餐桌')[0] ? DS.FURNITURE.餐桌.passive.food + (G.furnOf('餐桌')[0].lv - 1) : 0) + Math.round(G.teamSkill('美食家'));
+    const tableBonus = (G.furnOf('餐桌')[0] ? DS.FURNITURE.餐桌.passive.food + (G.furnOf('餐桌')[0].lv - 1) : 0) + Math.round(G.teamSkill('美食家')) + DS.Layout.sum('food');
     const isFood = it.cat === '食物';
     const healK = 1 + G.teamSkill('药物专精');
     const targets = it.team ? G.home() : [m];
@@ -74,7 +81,8 @@
       Object.keys(m.statuses).forEach((s) => { if (it.cure.includes('*') || it.cure.includes(s)) { delete m.statuses[s]; notes.push(`治愈了${s}`); } });
     }
     if (it.read) { m.stats[it.read.stat] += it.read.v; notes.push(`${it.read.stat}+${it.read.v}`); }
-    if (it.risk && U.chance(it.risk.p)) { Sim.addStatus(m, it.risk.status); notes.push(`出现了${it.risk.status}`); }
+    const riskP = it.risk ? (it.risk.status === '轻度辐射' ? it.risk.p * Math.min(1, (S.env.rad || 0) / 60) : it.risk.p) : 0;
+    if (it.risk && U.chance(riskP)) { Sim.addStatus(m, it.risk.status); notes.push(`出现了${it.risk.status}`); }
     if (!opts || !opts.free) G.removeItem(name, 1);
     return notes;
   };
@@ -119,8 +127,8 @@
     // 没水喝时自动烧雪水
     if (S.day >= 11 && G.hasFurn('灶台') && G.home().some((m) => m.thirst < 40) && !Object.keys(S.inv).some((n) => foodValue(n, 'thirst') > 0 && !DS.ITEMS[n].risk)) {
       let k = 0;
-      while (k < 2 && G.qty('木柴') > 0) {
-        G.removeItem('木柴', 1);
+      while (k < 2 && (G.qty('木柴') > 0 || G.qty('木头') > 0)) {
+        if (G.qty('木柴') > 0) G.removeItem('木柴', 1); else { G.removeItem('木头', 1); G.addItem('木柴', 1, true); }
         if (S.env.rad >= 60) { if (G.qty('滤芯')) { G.removeItem('滤芯', 1); G.addItem('净水', 6, true); } else G.addItem('雪水', 6, true); }
         else G.addItem('净水', 6, true);
         k++;
@@ -146,6 +154,8 @@
     if (!DS.STATUS[s]) return false;
     if (m.statuses[s]) { m.statuses[s].days = Math.max(m.statuses[s].days, DS.STATUS[s].days || 0); return false; }
     if (s === '轻伤' && m.statuses.重伤) return false;
+    if (s === '轻度辐射' && m.statuses.重度辐射) return false;
+    if (s === '感冒' && m.statuses.肺炎) return false;
     if (s === '重伤') delete m.statuses.轻伤;
     if (s === '肺炎') delete m.statuses.感冒;
     if (s === '重度辐射') delete m.statuses.轻度辐射;
@@ -156,6 +166,7 @@
   // ---------------- 消耗 ----------------
   function drain(m, h, t, e) {
     const k = 1 - G.skillVal(m, '耐力');
+    const ck = DS.Ext.k('consume'); h *= ck; t *= ck;
     let extra = 0; Object.keys(m.statuses).forEach((s) => { extra += (DS.STATUS[s].extra || 0) / 6; });
     m.hunger = U.clamp(m.hunger - h - extra * (h > 0 ? 1 : 0), 0, 100);
     m.thirst = U.clamp(m.thirst - t - extra * (t > 0 ? 1 : 0), 0, 100);
@@ -175,49 +186,61 @@
   // ---------------- 指派任务（每时段） ----------------
   function processTasks(notes) {
     const S = G.S;
+    const users = {};
+    const off = DS.Disaster.devicesOff();
+    const lay = DS.Layout.bonuses();
+    const layHas = (id) => lay.some((b) => b.id === id);
     G.home().forEach((m) => {
       if (!m.task) return;
       const f = S.house.furn.find((x) => x.id === m.task.fid);
       if (!f) { m.task = null; return; }
       const F = DS.FURNITURE[f.type];
       if (m.statuses.濒死 && f.type !== '医疗床') { m.task = null; return; }
+      (users[f.id] = users[f.id] || []).push(m);
+      if (off && (f.type === '电脑桌' || f.type === '收音机')) { if (!m._offNote) notes.push(`电磁风暴：${F.name}开不了机`); m._offNote = true; return; }
+      m._offNote = false;
       if (F.use) {
         const u = F.use; const L = F.lv || {};
-        const eCost = u.energy < 0 ? -u.energy : 0;
+        let eCost = u.energy < 0 ? -u.energy : 0;
+        if (f.type === '健身器械' && layHas('恢复区')) eCost = Math.max(0, eCost - 4);
         if (eCost && m.energy < eCost + 5) { if (!m._tired) notes.push(`${m.name}太累了，${F.verb}不动了`); m._tired = true; return; }
         m._tired = false;
         if (F.cost && !G.canPay([`item:${F.cost}`])) { if (!m._nofuel) notes.push(`${F.name}需要${F.cost.split(':')[0]}`); m._nofuel = true; return; }
         m._nofuel = false;
         if (F.cost) G.pay([`item:${F.cost}`]);
-        if (u.energy) m.energy = U.clamp(m.energy + u.energy + (u.energy > 0 ? (f.lv - 1) * (L.energy || 0) : 0), 0, 100);
-        if (u.mood) m.mood = U.clamp(m.mood + u.mood + (f.lv - 1) * (L.mood || 0), 0, 100);
+        if (u.energy) m.energy = U.clamp(m.energy + (u.energy > 0 ? u.energy + (f.lv - 1) * (L.energy || 0) : -eCost), 0, 100);
+        if (u.mood) m.mood = U.clamp(m.mood + u.mood + (f.lv - 1) * (L.mood || 0) + ((f.type === '电视柜' || f.type === '沙发') && layHas('影音区') ? 1 : 0), 0, 100);
         if (u.hunger) m.hunger = U.clamp(m.hunger + u.hunger, 0, 100);
         if (u.hp) m.hp = Math.min(G.maxHp(m), m.hp + Math.round(G.maxHp(m) * (u.hp + (f.lv - 1) * (L.hp || 0)) * (1 + G.teamSkill('药物专精'))));
-        if (u.intel && U.chance(0.4)) { Sim.gainIntel(u.intel); notes.push(`${m.name}从广播里听到了有用的消息（情报+1）`); }
+        if (u.intel && !off && U.chance(0.4)) { Sim.gainIntel(u.intel); notes.push(`${m.name}从广播里听到了有用的消息（情报+1）`); }
         if (f.type === '收音机' && G.S.unlocked.recruit && U.chance(0.04)) { S.pendingRecruit = G.randomRecruit(); notes.push('收音机里有幸存者在呼叫……'); }
         if (u.heal) {
           const curable = Object.keys(m.statuses).filter((s) => s !== '肺炎' && s !== '重度辐射');
           if (curable.length && U.chance(u.heal + (f.lv - 1) * (L.heal || 0))) { const s = U.pick(curable); delete m.statuses[s]; notes.push(`${m.name}的${s}好了`); }
         }
         if (u.train) {
-          const [st, base] = u.train; const prog = base + (f.lv - 1) * (L.train || 0);
+          const [st, base] = u.train; let prog = base + (f.lv - 1) * (L.train || 0);
+          if ((f.type === '书架' || f.type === '电脑桌') && layHas('学习角')) prog *= 1.2;
           m.train[st] = (m.train[st] || 0) + prog;
-          if (m.train[st] >= 100) { m.train[st] -= 100; m.stats[st] += 1; notes.push(`${m.name}的${st}提升了！（${m.stats[st]}）`); }
+          const ups = G.gainExp(m, 2);
+          if (m.train[st] >= 100) { m.train[st] -= 100; m.stats[st] += 1; ups.push(...G.gainExp(m, 8)); notes.push(`${m.name}的${st}提升了！（${m.stats[st]}）`); }
+          if (ups.length) notes.push(`${m.name}升到了 ${m.lv} 级`);
         }
       }
     });
+    DS.Bond.together(Object.values(users).filter((l) => l.length >= 2));
     // 种植
     const cold = S.env.inT < 5;
     G.furnOf('种植箱').forEach((f) => {
       const worker = G.home().find((m) => m.task && m.task.fid === f.id);
-      const boost = 1 + (worker ? 0.5 + (worker.job === '种植者' ? 0.25 : 0) : 0);
+      const boost = (1 + (worker ? 0.5 + (worker.job === '种植者' ? 0.25 : 0) : 0)) * (1 + (layHas('温室角') ? 0.25 : 0));
       f.plots = f.plots || [];
       f.plots.forEach((p) => {
         if (cold) { p.cold = true; return; }
         p.cold = false; p.prog += boost;
         const r = DS.RECIPES.find((x) => x.id === p.rid);
         if (p.prog >= r.t) {
-          let n = r.n * (1 + G.teamSkill('绿手指'));
+          let n = r.n * (1 + G.teamSkill('绿手指')) * DS.Ext.k('farm');
           if (S.perks.includes('farmer')) n *= 2;
           n = Math.max(1, Math.round(n));
           const got = G.addItem(r.out, n);
@@ -233,7 +256,7 @@
     G.furnOf('工作台').forEach((f) => {
       if (!f.job) return;
       const worker = G.home().find((m) => m.task && m.task.fid === f.id);
-      f.job.prog += worker ? 1 + (worker.job === '工程师' ? 0.5 : 0) : 0.5;
+      f.job.prog += (worker ? 1 + (worker.job === '工程师' ? 0.5 : 0) : 0.5) * (off ? 0.5 : 1);
       const r = DS.RECIPES.find((x) => x.id === f.job.rid);
       if (f.job.prog >= r.t) {
         const out = Sim.craftOutput(r, f.job.n || 1);
@@ -313,8 +336,14 @@
     S.day++; S.slot = -1;
     S.env.fireOut = false;
     Sim.computeEnv(true);
+    // 每日挑战：第 30 天结束
+    if (S.daily && S.day > DS.Daily.LEN) { S.day = DS.Daily.LEN; Sim.ending('挑战完成'); return rep; }
     // 末日降临
     if (S.day >= 15 && S.phase !== 'apoc') Sim.apocalypse(rep);
+    // 天灾
+    DS.Disaster.tick(rep);
+    Sim.computeEnv(false);
+    if ((S.chapter || 1) >= 2 && S.day === 101 && !S.explore.locs.includes('riverbank')) { S.explore.locs.push('riverbank'); rep.good.push('🗺️ 新地点：解冻江滩'); }
     // 壁炉燃料
     const fires = G.furnOf('壁炉');
     if (fires.length && S.fireOn && S.env.outT < 12) {
@@ -398,7 +427,21 @@
       }
     });
     // 收音机被动
-    if (G.hasFurn('收音机') && U.chance(0.25)) { Sim.gainIntel(1); rep.good.push('收音机里断断续续的广播：情报 +1'); }
+    if (G.hasFurn('收音机') && !DS.Disaster.devicesOff() && U.chance(0.25)) { Sim.gainIntel(1); rep.good.push('收音机里断断续续的广播：情报 +1'); }
+    // 春天篇：化雪、下雨，不烧火也能接到水
+    if ((S.chapter || 1) >= 2 && S.env.outT >= -2) {
+      const n = G.addItem('雪水', S.weather.type === '雨' ? U.ri(6, 10) : U.ri(2, 5));
+      if (n) rep.good.push(S.weather.type === '雨' ? `屋檐下接了一夜雨水（雪水×${n}）` : `门口的积雪化成了水（雪水×${n}）`);
+    }
+    // 春天篇：雪化后能挖到野菜
+    if ((S.chapter || 1) >= 2 && S.env.outT > -25 && U.chance(0.55)) {
+      const n = G.addItem(S.env.outT > 0 && U.chance(0.4) ? U.pick(['土豆', '红薯']) : '青菜', U.ri(1, 3));
+      if (n) rep.good.push(S.env.outT > 0 ? '屋外的泥地里刨到了能吃的东西' : '积雪化开的地方冒出了一丛野菜');
+    }
+    // 伙伴 / 羁绊 / 远征
+    DS.Pet.daily(rep);
+    DS.Bond.daily(rep);
+    DS.Dispatch.daily(rep);
     // 集市刷新
     if (S.phase === 'apoc') Sim.refreshMarket();
     // 气泡
@@ -407,7 +450,11 @@
     if (G.me().mood <= 0) { S.breakdown = (S.breakdown || 0) + 1; if (S.breakdown >= 2) Sim.ending('精神崩溃'); else rep.warn.push('你的精神已经到了崩溃边缘！再这样下去就撑不住了——吃点好的、泡个澡、看看电影，或者和同伴说说话。'); }
     else { S.breakdown = 0; if (G.me().mood < 15) rep.warn.push('你的心情很糟（' + G.me().mood + '）。心情归零会精神崩溃。'); }
     if (S.phase === 'apoc' && S.house.integrity < 10) { S.breach = (S.breach || 0) + 1; if (S.breach >= 2) Sim.ending('安全屋告破'); else rep.warn.push('安全屋的防线摇摇欲坠（完整度低于 10%）！今天之内必须修好，否则就守不住了。'); } else S.breach = 0;
-    if (!S.ending && S.day >= 100 && !S.endless) Sim.checkFinal();
+    if (!S.ending && !S.endless && !S.daily) {
+      if ((S.chapter || 1) >= 2) { if (S.day >= DS.Spring.LAST) DS.Spring.checkFinal(); }
+      else if (S.day >= 100) Sim.checkFinal();
+    }
+    DS.Ach.check();
     // 新手提示
     if (S.day >= 10 && S.day <= 16 && !G.hasFurn('壁炉')) rep.warn.push('屋里没有壁炉！寒潮会把室温拉到零下——去【商店→家具城】买一个，再囤些木柴。');
     else if (S.day >= 11 && G.hasFurn('壁炉') && G.qty('木柴') + G.qty('木头') * 2 < 6) rep.warn.push(`燃料只够烧 ${Math.floor((G.qty('木柴') + G.qty('木头') * 2) / 2)} 天了，记得补充木柴/木头。`);
@@ -453,17 +500,26 @@
   // ---------------- 结局 ----------------
   Sim.ending = function (id) {
     const S = G.S; if (S.ending) return;
+    if (S.daily) {
+      S.ending = id === '挑战完成' ? id : (DS.ENDINGS.find((e) => e.id === id) || DS.ENDINGS[0]).id;
+      const sc = DS.Daily.score(S);
+      S.endingInfo = { id: S.ending, daily: true, score: sc.total, parts: sc.parts, day: S.day };
+      DS.Daily.record(sc.total);
+      G.clearSave('daily');
+      return;
+    }
     const E = DS.ENDINGS.find((e) => e.id === id) || DS.ENDINGS[0];
     S.ending = E.id;
     const first = !G.meta.endings[E.id];
     G.meta.endings[E.id] = (G.meta.endings[E.id] || 0) + 1;
-    const pts = E.pts + (first ? E.pts : 0) + Math.floor(S.day / 20);
+    const pts = Math.round((E.pts + (first ? E.pts : 0) + Math.floor(S.day / 20)) * DS.Ext.k('pts'));
     G.meta.points += pts;
     G.meta.runs++;
     G.meta.best = Math.max(G.meta.best || 0, S.day);
     S.endingInfo = { id: E.id, pts, first, day: S.day };
     G.saveMeta();
     G.clearSave();
+    DS.Ach.check();
   };
   Sim.checkFinal = function () {
     const S = G.S; const t = S.house.type; const md = S.house.mods;
@@ -496,5 +552,5 @@
     S.market = { day: S.day, offers };
   };
   Sim.sellPrice = (name) => Math.max(1, Math.round((DS.ITEMS[name].cprice || DS.ITEMS[name].price / 50 || 10) * 0.4));
-  Sim.discount = () => 1 - G.teamSkill('精打细算');
+  Sim.discount = () => (1 - G.teamSkill('精打细算')) * DS.Ext.k('shop');
 })();

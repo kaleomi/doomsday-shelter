@@ -19,9 +19,11 @@
     UI.sheet({
       title: '人员', sub: `${S.members.length}/${G.memberSlots() + 1} 人　${S.unlocked.recruit ? '' : '（招募未解锁）'}`,
       render(body, tab, sh) {
+        body.appendChild(h('div', { class: 'row', style: { marginBottom: '10px' } }, h('button', { class: 'btn small primary', onclick: () => { DS.ExtUI.autoAssign(); sh.refresh(); } }, '⚡ 一键安排'), h('span', { class: 'tiny muted grow' }, '伤病的去休养，累的去躺平，其余的按职业去干活或训练')));
         const list = h('div', { class: 'list' });
         S.members.forEach((m) => list.appendChild(memCard(m, () => { sh.close(); P.memberDetail(m); })));
         body.appendChild(list);
+        if (S.pet) body.appendChild(h('div', { class: 'li click', style: { marginTop: '8px' }, onclick: () => { sh.close(); DS.ExtUI.pet(); } }, h('div', { style: { width: '52px', height: '52px', borderRadius: '12px', display: 'grid', placeItems: 'center', fontSize: '30px', background: '#1a2a40', flex: 'none' } }, '🐕'), h('div', { class: 'grow' }, h('div', { class: 'nm' }, S.pet.name, h('span', { class: 'tiny muted' }, `　伙伴 Lv${S.pet.lv}`)), h('div', { class: 'ds' }, `忠诚 ${S.pet.loyal}　饱腹 ${S.pet.hunger}　生命 ${S.pet.hp}/${DS.Pet.maxHp()}${S.pet.hurt ? '　🩹养伤中' : ''}`)), h('span', { class: 'muted' }, '›')));
         if (S.deadList.length) body.appendChild(h('div', { class: 'small dim', style: { marginTop: '12px' } }, '🕯 逝者：' + S.deadList.join('、')));
         body.appendChild(h('div', { class: 'small muted', style: { marginTop: '12px', lineHeight: 1.7 } }, '点击队员查看详情、装备与指派任务。点击安全屋里的家具也可以安排谁去使用它。'));
       },
@@ -35,7 +37,7 @@
       h('div', { class: 'grow' },
         h('div', { class: 'row' }, h('b', null, m.name), h('span', { class: 'small muted' }, `${DS.JOBS[m.job].icon}${m.id === 'me' ? '重生者 · ' + m.job : m.title}`), h('span', { class: 'grow' }), h('span', { class: 'tiny muted' }, '战力 ' + G.power(m))),
         h('div', { class: 'minibars' }, UI.mini(m.hp, mx, '#ff5d6c'), UI.mini(m.energy, 100, '#ffd447'), UI.mini(m.hunger, 100, '#f0a35b'), UI.mini(m.thirst, 100, '#4fb6ff')),
-        h('div', { class: 'row tiny muted', style: { marginTop: '4px' } }, `心情 ${m.mood}`, task ? `　🔧 ${DS.FURNITURE[task.type].verb}中` : '　空闲'),
+        h('div', { class: 'row tiny muted', style: { marginTop: '4px' } }, `心情 ${m.mood}`, m.away === 'dispatch' ? (() => { const d = DS.Dispatch.awayOf(m); return d ? `　🚩 远征${DS.Explore.loc(d.loc).name}，第${d.ret}天回` : '　🚩 远征中'; })() : m.away ? '　🧭 外出探索' : task ? `　🔧 ${DS.FURNITURE[task.type].verb}中` : '　空闲'),
         UI.statusTags(m)));
   }
 
@@ -63,11 +65,20 @@
         body.appendChild(h('div', { class: 'col' }, m.skills.map(([s, q]) => P.skillRow(m, s, q))));
         body.appendChild(h('h3', { class: 'sec' }, '装备'));
         body.appendChild(h('div', { class: 'row' }, ['武器', '防具', '鞋子'].map((sl) => {
-          const g = m.gear[sl];
-          return h('div', { class: 'gear-slot', onclick: () => chooseGear(m, sl, sh) }, g ? A.item(g) : h('div', { class: 'itm', style: { opacity: 0.35 } }, sl === '武器' ? '🗡️' : sl === '防具' ? '🦺' : '👟'), h('div', { class: 'nm' + (g ? '' : ' dim') }, g || '空 · ' + sl));
+          const g = m.gear[sl]; const r = g && DS.Armory.rec(g);
+          return h('div', { class: 'gear-slot', onclick: () => { if (m.away) { UI.toast(m.name + '不在安全屋'); return; } chooseGear(m, sl, sh); } }, g ? A.item(g) : h('div', { class: 'itm', style: { opacity: 0.35 } }, sl === '武器' ? '🗡️' : sl === '防具' ? '🦺' : '👟'), h('div', { class: 'nm' + (g ? '' : ' dim') }, g ? g + (r && r.lv ? ' +' + r.lv : '') : '空 · ' + sl));
         })));
+        if (m.id !== 'me') {
+          const bl = DS.Bond.list(m);
+          if (bl.length) {
+            body.appendChild(h('h3', { class: 'sec' }, '羁绊'));
+            body.appendChild(h('div', { class: 'list' }, bl.map(({ m: o, v }) => h('div', { class: 'li' }, h('div', { style: { width: '30px', height: '30px', borderRadius: '50%', overflow: 'hidden', flex: 'none' }, html: A.avatar(o) }), h('div', { class: 'grow' }, h('div', { class: 'nm' }, o.name, h('span', { class: 'tiny ' + (v >= 20 ? 'ok' : v <= -20 ? 'bad' : 'muted') }, `　${DS.Bond.stage(v)} ${v}`)), h('div', { class: 'bagbar', style: { marginTop: '3px' } }, h('i', { style: { width: Math.abs(v) + '%', background: v >= 0 ? '#e86a92' : '#7f8c8d' } })))))));
+            body.appendChild(h('div', { class: 'tiny muted', style: { marginTop: '4px' } }, '一起干活、并肩作战、远征都会加深羁绊。挚友（50+）同队攻击 +5%；生死之交（80+）会在战斗中替对方挡下致命一击。'));
+          }
+        }
         body.appendChild(h('h3', { class: 'sec' }, '行动'));
         const task = m.task && S.house.furn.find((f) => f.id === m.task.fid);
+        if (m.away) { body.appendChild(h('div', { class: 'small warn' }, m.away === 'dispatch' ? `🚩 ${m.name}正在远征，回来之前什么也做不了。` : `🧭 ${m.name}正在外面探索。`)); return; }
         body.appendChild(h('div', { class: 'row', style: { flexWrap: 'wrap' } },
           h('button', { class: 'btn', onclick: () => useOn(m, sh) }, '🍽 吃喝/用药'),
           h('button', { class: 'btn', onclick: () => assignMenu(m, sh) }, '🔧 ' + (task ? '任务：' + DS.FURNITURE[task.type].verb : '指派任务')),
@@ -86,16 +97,19 @@
         cands.forEach((n) => {
           const it = DS.ITEMS[n];
           list.appendChild(h('div', { class: 'li click', onclick: () => { G.removeItem(n, 1); if (m.gear[slot]) G.addItem(m.gear[slot], 1, true); m.gear[slot] = n; m.hp = Math.min(m.hp, G.maxHp(m)); DS.Audio.confirm(); sh.close(); parent.refresh(); refreshGame(); } },
-            A.item(n, { count: S.inv[n] }), h('div', { class: 'grow' }, h('div', { class: 'nm' }, n, ' ', h('span', { class: 'tiny warn' }, ['', 'Ⅰ', 'Ⅱ', 'Ⅲ'][it.tier || 0])), h('div', { class: 'ds' }, gearDesc(it)))));
+            A.item(n, { count: S.inv[n] }), h('div', { class: 'grow' }, h('div', { class: 'nm' }, n, (DS.Armory.rec(n) || {}).lv ? ' +' + DS.Armory.rec(n).lv : '', ' ', h('span', { class: 'tiny warn' }, ['', 'Ⅰ', 'Ⅱ', 'Ⅲ'][it.tier || 0])), h('div', { class: 'ds' }, gearDesc(DS.Armory.eff(n))))));
         });
         if (!cands.length && !m.gear[slot]) list.appendChild(h('div', { class: 'muted small' }, '仓库里没有可用的' + slot + '。可以在商店购买、探索获得或用工作台制造。'));
         body.appendChild(list);
+        if (G.hasFurn('工作台')) body.appendChild(h('button', { class: 'btn block', style: { marginTop: '10px' }, onclick: () => { sh.close(); DS.ExtUI.armory(); } }, '🔧 去工作台改装'));
       },
     });
   }
   function gearDesc(it) {
     const p = [];
-    if (it.atk) p.push('攻击 +' + it.atk * 3); if (it.def) p.push('防御 +' + it.def); if (it.hp) p.push('生命 +' + it.hp);
+    if (it.atk) p.push('攻击 +' + Math.round(it.atk * 3)); if (it.def) p.push('防御 +' + it.def); if (it.hp) p.push('生命 +' + it.hp);
+    if (it.crit) p.push('暴击 +' + Math.round(it.crit * 100) + '%'); if (it.drain) p.push('吸血 ' + Math.round(it.drain * 100) + '%');
+    if (it.affixes && it.affixes.length) p.push('【' + it.affixes.join('·') + '】');
     if (it.str) p.push('力量 +' + it.str); if (it.agi) p.push('灵巧 +' + it.agi); if (it.spd) p.push('速度 +' + it.spd);
     if (it.dodge) p.push('闪避 +' + Math.round(it.dodge * 100) + '%'); if (it.cold) p.push('防寒 ' + Math.round(it.cold * 100) + '%'); if (it.rad) p.push('防辐射 ' + Math.round(it.rad * 100) + '%');
     return p.join('　') + (it.desc ? '。' + it.desc : '');
@@ -421,6 +435,9 @@
           stat('🌡️', '室内', UI.fmtTemp(S.env.inT)),
           stat(DS.VEHICLES[S.vehicle].icon, '载具', S.vehicle)));
         if (H.pro) body.appendChild(h('div', { class: 'small muted', style: { marginTop: '8px' } }, `优点：${H.pro}　缺点：${H.con}`));
+        DS.ExtUI.disasterCard(body, sh);
+        const lb = DS.Layout.bonuses();
+        if (lb.length) { body.appendChild(h('h3', { class: 'sec' }, '布局加成')); lb.forEach((b) => body.appendChild(h('div', { class: 'small', style: { margin: '3px 0' } }, `${b.icon} ${b.id}${b.n > 1 ? ' ×' + b.n : ''}：`, h('span', { class: 'muted' }, b.desc)))); }
         // 壁炉
         if (G.hasFurn('壁炉')) {
           body.appendChild(h('h3', { class: 'sec' }, '壁炉'));
@@ -452,6 +469,8 @@
         h('button', { class: 'btn small primary', onclick: () => { if (G.placeFurniture(t)) { S.house.stored.splice(i, 1); sh.refresh(); refreshGame(); } else UI.toast('没有足够的空间', 'bad'); } }, '摆放'))));
       body.appendChild(l);
     }
+    body.appendChild(h('button', { class: 'btn primary block', style: { marginTop: '6px' }, onclick: () => { sh.close(); DS.ExtUI.startLayout(); } }, '🧩 自由布置（移动、旋转家具）'));
+    body.appendChild(h('div', { class: 'tiny muted', style: { margin: '6px 0' } }, '摆得巧有加成：' + DS.Layout.RULES.map((r) => r.icon + r.id).join(' ')));
     body.appendChild(h('h3', { class: 'sec' }, '屋内家具'));
     const l = h('div', { class: 'list' });
     S.house.furn.forEach((f) => l.appendChild(h('div', { class: 'li click', onclick: () => { sh.close(); P.furniture(f); } }, h('div', { class: 'itm', style: { padding: '4px' }, html: A.furniture(f.type, f.lv, {}) }), h('div', { class: 'grow' }, h('div', { class: 'nm' }, f.type + (f.lv > 1 ? ' Lv' + f.lv : '')), h('div', { class: 'ds' }, DS.FURNITURE[f.type].desc)), h('span', { class: 'muted' }, '›'))));
@@ -466,7 +485,7 @@
     if (F.job === 'craft') return P.crafting(f);
     UI.sheet({
       title: F.name + (f.lv > 1 ? ' Lv' + f.lv : ''), sub: F.desc,
-      render(body, tab, sh) { furnHeader(body, f, sh); if (F.use) assignBlock(body, f, sh); if (f.type === '壁炉') body.appendChild(h('button', { class: 'btn block', style: { marginTop: '10px' }, onclick: () => { sh.close(); P.house(); } }, '🔥 壁炉设置')); },
+      render(body, tab, sh) { furnHeader(body, f, sh); if (f.type === '电脑桌') DS.ExtUI.pcBlock(body, f, sh); if (F.use) assignBlock(body, f, sh); if (f.type === '壁炉') body.appendChild(h('button', { class: 'btn block', style: { marginTop: '10px' }, onclick: () => { sh.close(); P.house(); } }, '🔥 壁炉设置')); },
     });
   };
   function furnHeader(body, f, sh) {
@@ -584,6 +603,7 @@
           const r = DS.RECIPES.find((x) => x.id === f.job.rid);
           body.appendChild(h('div', { class: 'card', style: { marginTop: '8px' } }, h('div', { class: 'row' }, A.item(r.out.startsWith('@') ? '塑料纤维' : r.out), h('div', { class: 'grow' }, h('div', { class: 'nm' }, '制造中：' + (r.name || r.out) + (f.job.n > 1 ? ' ×' + f.job.n : '')), h('div', { class: 'bagbar', style: { marginTop: '4px' } }, h('i', { style: { width: Math.min(100, f.job.prog / r.t * 100) + '%' } })), h('div', { class: 'tiny dim' }, `${f.job.prog.toFixed(1)}/${r.t}（无人照看每时段 +0.5，有人 +1，工程师 +1.5）`)))));
         }
+        body.appendChild(h('button', { class: 'btn block', style: { marginTop: '8px' }, onclick: () => DS.ExtUI.armory() }, '🔧 军械改装：强化装备、加装词条'));
         body.appendChild(h('h3', { class: 'sec' }, '配方'));
         const list = h('div', { class: 'list' });
         const save = G.teamSkill('巧手');
@@ -622,7 +642,7 @@
           Object.keys(S.contacts).forEach((who) => {
             const a = S.contacts[who]; const c = DS.CONTACTS[who] || {};
             const stage = a >= 80 ? '知己' : a >= 60 ? '手足' : a >= 40 ? '挚友' : a >= 20 ? '伙伴' : a >= 6 ? '熟人' : a >= 0 ? '中立' : a >= -19 ? '冷淡' : a >= -39 ? '疏远' : a >= -59 ? '厌恶' : a >= -79 ? '仇视' : '死敌';
-            list.appendChild(h('div', { class: 'li' }, h('div', { style: { width: '38px', height: '38px', borderRadius: '50%', overflow: 'hidden', flex: 'none', background: '#223' }, html: A.avatar({ name: who, gender: DS.STORY_RECRUITS[who] ? DS.STORY_RECRUITS[who].gender : (/芳|姑/.test(who) ? '女' : '男'), job: DS.STORY_RECRUITS[who] ? DS.STORY_RECRUITS[who].job : '拾荒者', look: DS.STORY_RECRUITS[who] ? DS.STORY_RECRUITS[who].look : { hair: 0, skin: 1 } }) }),
+            list.appendChild(h('div', { class: 'li' }, h('div', { style: { width: '38px', height: '38px', borderRadius: '50%', overflow: 'hidden', flex: 'none', background: '#223' }, html: A.avatar({ name: who, gender: DS.STORY_RECRUITS[who] ? DS.STORY_RECRUITS[who].gender : (c.gender || (/芳|姑|姥/.test(who) ? '女' : '男')), job: DS.STORY_RECRUITS[who] ? DS.STORY_RECRUITS[who].job : '拾荒者', look: DS.STORY_RECRUITS[who] ? DS.STORY_RECRUITS[who].look : { hair: 0, skin: 1 } }) }),
               h('div', { class: 'grow' }, h('div', { class: 'nm' }, who, h('span', { class: 'tiny muted' }, '　' + (c.role || ''))), h('div', { class: 'row tiny' }, h('span', { class: a >= 0 ? 'ok' : 'bad' }, stage + ' ' + a), S.members.some((m) => m.name === who) ? h('span', { class: 'warn' }, '　在队') : null))));
           });
           if (!Object.keys(S.contacts).length) list.appendChild(h('div', { class: 'muted small' }, '通讯录是空的。'));
@@ -661,6 +681,7 @@
         body.appendChild(h('div', { class: 'small muted', style: { marginBottom: '8px' } }, '游戏每次行动后自动保存在本机浏览器里。'));
         body.appendChild(h('div', { class: 'col' },
           h('button', { class: 'btn block', onclick: () => { G.save(); UI.toast('已保存', 'good'); } }, '💾 立即保存'),
+          G.S && !G.S.daily ? h('button', { class: 'btn block', onclick: () => { G.save(); DS.ExtUI.saves(); } }, '📤 存档管理 / 导出存档码') : null,
           h('button', { class: 'btn block', onclick: () => { G.save(); sh.close(); DS.Title.show(); } }, '🏠 返回标题'),
           h('button', { class: 'btn danger block', onclick: async () => { if (await UI.confirm('放弃这一局，重新开始？当前进度会被删除（不会获得重生点）。', '放弃')) { G.clearSave(); sh.close(); DS.Title.show(); } } }, '放弃本局')));
         body.appendChild(h('h3', { class: 'sec' }, '操作提示'));

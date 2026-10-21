@@ -41,6 +41,9 @@
       case 'integrity': return S.house.integrity;
       case 'temp': return S.env.inT; case 'outtemp': return S.env.outT; case 'rad': return S.env.inRad;
       case 'day': return S.day; case 'rebirth': return S.rebirth || 0; case 'level': return me.lv;
+      case 'chapter': return S.chapter || 1;
+      case 'petloyal': return S.pet ? S.pet.loyal : 0;
+      case 'bond': return ctx && ctx.member && ctx.member2 ? DS.Bond.get(ctx.member, ctx.member2) : 0;
     }
     return 0;
   }
@@ -67,6 +70,12 @@
       case 'mod': r = DSL.cmp(S.house.mods[p.mod] || 0, p.op, p.v); break;
       case 'aff': r = DSL.cmp(E.aff(p.who), p.op, p.v); break;
       case 'var': r = DSL.cmp(varVal(p.name, ctx), p.op, p.v); break;
+      case 'pet': r = !!S.pet; break;
+      case 'disaster': r = !!(S.disaster && S.disaster.active && p.v.includes(S.disaster.type)); break;
+      case 'forecast': r = !!(S.disaster && !S.disaster.active && p.v.includes(S.disaster.type)); break;
+      case 'prep': r = !!(S.disaster && S.disaster.type === p.v && S.disaster.prepared); break;
+      case 'diff': r = p.v.includes(S.diff || '标准'); break;
+      case 'daily': r = !!S.daily; break;
     }
     return p.neg ? !r : r;
   };
@@ -96,16 +105,33 @@
     const cd = ev.cd !== undefined ? ev.cd : ev.pool === 'bubble' ? 4 : ev.pool === 'explore_spot' ? 2 : 12;
     return S.day - last >= cd;
   }
+  // 需要两名队员的事件（{member2} / m2. / bond）
+  const pairCache = {};
+  E.usesPair = (ev) => { if (pairCache[ev.id] === undefined) pairCache[ev.id] = /\{member2\}|\{m2他\}|"m2\.|"bond:|"bond[<>=]/.test(JSON.stringify(ev)); return pairCache[ev.id]; };
+  function pairs(ev, ctx) {
+    const list = people(ctx).filter((m) => m.id !== 'me' && !m.statuses.濒死 && (!ctx.explore || m !== ctx.explore.team[0]));
+    const jobC = (ev.cond || []).map(pc).find((p) => p.k === 'job' && !p.neg);
+    const out = [];
+    list.forEach((a) => { if (jobC && !jobC.v.includes(a.job)) return; list.forEach((b) => { if (a !== b) out.push([a, b]); }); });
+    return out;
+  }
+  function pairOk(ev, ctx, a, b) { const c2 = Object.assign({}, ctx, { member: a, member2: b }); return (ev.cond || []).every((c) => E.evalCond(c, c2)); }
   E.eligible = function (ev, ctx, opts) {
     opts = opts || {};
     if (!opts.ignoreFired && !cdOk(ev)) return false;
     if (!opts.ignoreDay && !dayOk(ev)) return false;
     if (ev.slot === 'night' && !opts.night) return false;
     if (ev.slot === 'day' && opts.night) return false;
+    if (E.usesPair(ev)) return pairs(ev, ctx || {}).some(([a, b]) => pairOk(ev, ctx || {}, a, b));
     return (ev.cond || []).every((c) => E.evalCond(c, ctx));
   };
   E.instance = function (ev, ctx) {
     ctx = Object.assign({}, ctx || {});
+    if (E.usesPair(ev) && !(ctx.member && ctx.member2)) {
+      const ok = pairs(ev, ctx).filter(([a, b]) => pairOk(ev, ctx, a, b));
+      const pr = ok.length ? U.pick(ok) : U.pick(pairs(ev, ctx));
+      if (pr) { ctx.member = pr[0]; ctx.member2 = pr[1]; }
+    }
     if (!ctx.member) ctx.member = pickMember(ev, ctx);
     return { ev, ctx };
   };
@@ -121,7 +147,7 @@
       if (typeof ev.day === 'number') { if (ev.day === S.day) q.push(ev.id); return; }
       const [a, b] = ev.day;
       if (S.day < a || S.day > b) return;
-      if (!(ev.cond || []).every((c) => E.evalCond(c, {}))) return;
+      if (E.usesPair(ev) ? !pairs(ev, {}).some(([x, y]) => pairOk(ev, {}, x, y)) : !(ev.cond || []).every((c) => E.evalCond(c, {}))) return;
       const left = b - S.day + 1;
       if (left <= 1 || Math.random() < 1 / left) q.push(ev.id);
     });
@@ -137,7 +163,8 @@
       if (!ev) continue;
       if (ev.slot === 'night') { S.queue.push(id); if (S.queue.every((x) => (DS.EVENT_BY_ID[x] || {}).slot === 'night')) break; continue; }
       const ctx = {};
-      if ((ev.cond || []).every((c) => E.evalCond(c, ctx)) && (S.fired[id] === undefined || ev.repeat)) return E.instance(ev, ctx);
+      const ok = E.usesPair(ev) ? pairs(ev, ctx).some(([x, y]) => pairOk(ev, ctx, x, y)) : (ev.cond || []).every((c) => E.evalCond(c, ctx));
+      if (ok && (S.fired[id] === undefined || ev.repeat)) return E.instance(ev, ctx);
     }
     // 浮动剧情（无 day、未被引用、条件满足）
     if (Math.random() < 0.3) {
@@ -153,15 +180,24 @@
 
   const CAT_W_DAY = { 交易: 16, 战斗: 13, 物资: 18, 社交: 13, 完整度: 8, 维护: 10, 人员: 14 };
   const CAT_W_NIGHT = { 战斗: 46, 完整度: 11, 维护: 12, 人员: 12, 社交: 6, 物资: 6 };
+  const chCache = {};
+  const isCh2 = (ev) => { if (chCache[ev.id] === undefined) chCache[ev.id] = (ev.cond || []).some((c) => /^chapter>=?2/.test(c)); return chCache[ev.id]; };
+  const disCache = {};
+  const isDis = (ev) => { if (disCache[ev.id] === undefined) disCache[ev.id] = (ev.cond || []).some((c) => /^(disaster|forecast):/.test(c)); return disCache[ev.id]; };
   function pickRandom(night) {
     const S = G.S;
-    const pool = DS.EVENTS.filter((ev) => ev.pool === 'random' && !refOnly.has(ev.id) && E.eligible(ev, {}, { night }));
+    let pool = DS.EVENTS.filter((ev) => ev.pool === 'random' && !refOnly.has(ev.id) && E.eligible(ev, {}, { night }));
     if (!pool.length) return null;
+    // 天灾当天/预警期：优先出天灾小故事
+    const dis = pool.filter(isDis);
+    if (dis.length && Math.random() < 0.6) return E.instance(U.pick(dis), {});
+    // 春天篇：多数时候抽春天篇事件
+    if ((S.chapter || 1) >= 2) { const sp = pool.filter(isCh2); if (sp.length && Math.random() < 0.7) pool = sp; }
     const W = Object.assign({}, night ? CAT_W_NIGHT : CAT_W_DAY);
     // 完整度越低越容易遇到战斗；威慑降低；别墅更惹眼
     const integ = S.house.integrity;
     const k = integ >= 90 ? 0.85 : integ >= 70 ? 0.95 : integ >= 50 ? 1.1 : integ >= 30 ? 1.25 : 1.5;
-    W.战斗 = (W.战斗 || 0) * k * (1 - G.teamSkill('威慑')) * (S.house.type === '独栋别墅' ? 1.25 : 1) * (S.house.type === '地下堡垒' ? 0.8 : 1);
+    W.战斗 = (W.战斗 || 0) * k * (1 - G.teamSkill('威慑')) * (S.house.type === '独栋别墅' ? 1.25 : 1) * (S.house.type === '地下堡垒' ? 0.8 : 1) * DS.Ext.mut('fight', 1);
     const cats = Object.keys(W).filter((c) => pool.some((e) => (e.cat || '物资') === c));
     const cat = U.wpick(cats, (c) => W[c]);
     const list = pool.filter((e) => (e.cat || '物资') === cat);
@@ -175,7 +211,8 @@
       const i = S.queue.findIndex((id) => (DS.EVENT_BY_ID[id] || {}).slot === 'night');
       if (i >= 0) { const id = S.queue.splice(i, 1)[0]; return E.instance(DS.EVENT_BY_ID[id], {}); }
     }
-    const p = S.phase === 'apoc' ? 0.42 : 0.12;
+    let p = S.phase === 'apoc' ? 0.42 : 0.12;
+    if (S.disaster && S.disaster.active && S.disaster.type === '冰雾') p = Math.min(0.85, p * (S.disaster.prepared ? 1.2 : 2));
     if (Math.random() > p) return null;
     return pickRandom(true);
   };
@@ -205,9 +242,11 @@
   // ---------------- 文本 ----------------
   E.text = function (s, ctx) {
     if (!s) return '';
-    const me = G.me(); const m = ctx && ctx.member;
+    const me = G.me(); const m = ctx && ctx.member; const m2 = ctx && ctx.member2;
     return String(s).replace(/\{name\}/g, me.name).replace(/\{他\}/g, me.gender === '女' ? '她' : '他')
-      .replace(/\{member\}/g, m ? m.name : '同伴').replace(/\{m他\}/g, m ? (m.gender === '女' ? '她' : '他') : 'TA');
+      .replace(/\{member\}/g, m ? m.name : '同伴').replace(/\{m他\}/g, m ? (m.gender === '女' ? '她' : '他') : 'TA')
+      .replace(/\{member2\}/g, m2 ? m2.name : '另一个同伴').replace(/\{m2他\}/g, m2 ? (m2.gender === '女' ? '她' : '他') : 'TA')
+      .replace(/\{pet\}/g, G.S && G.S.pet ? G.S.pet.name : '狗');
   };
 
   // ---------------- 选项状态 ----------------
@@ -229,7 +268,7 @@
     switch (p.k) {
       case 'stat': return `${p.stat}${CMPW[p.op]}${p.v}`;
       case 'item': return `${p.item}${CMPW[p.op]}${p.v}`;
-      case 'var': return ({ money: '金钱', crystal: '晶核', intel: '情报', mood: '心情', hp: '生命', members: '人数', integrity: '完整度', temp: '室温', rad: '辐射', day: '天数', energy: '体力', hunger: '饱腹', thirst: '饮水', level: '等级' }[p.name] || p.name) + CMPW[p.op] + (p.name === 'money' ? U.money(p.v) : p.v) + (p.pct ? '%' : '');
+      case 'var': return ({ money: '金钱', crystal: '晶核', intel: '情报', mood: '心情', hp: '生命', members: '人数', integrity: '完整度', temp: '室温', rad: '辐射', day: '天数', energy: '体力', hunger: '饱腹', thirst: '饮水', level: '等级', chapter: '章节', petloyal: '伙伴忠诚', bond: '羁绊' }[p.name] || p.name) + CMPW[p.op] + (p.name === 'money' ? U.money(p.v) : p.v) + (p.pct ? '%' : '');
       case 'member': return `${neg}需要${p.v.join('/')}在队`;
       case 'job': return `需要${p.v.join('/')}`;
       case 'furn': return `${neg}需要${p.v.join('/')}`;
@@ -238,6 +277,10 @@
       case 'mod': return `${p.mod}改造${CMPW[p.op]}${p.v}`;
       case 'vehicle': return `需要${p.v.join('/')}`;
       case 'aff': return `${p.who}好感${CMPW[p.op]}${p.v}`;
+      case 'pet': return p.neg ? '没有伙伴' : '需要伙伴';
+      case 'prep': return `${neg}已防备${p.v}`;
+      case 'disaster': return `${p.v.join('/')}期间`;
+      case 'diff': return `${p.v.join('/')}难度`;
       default: return '条件不足';
     }
   };
@@ -296,6 +339,7 @@
   function targets(who, ctx) {
     if (who === 'team') return people(ctx);
     if (who === 'm') return ctx.member ? [ctx.member] : [];
+    if (who === 'm2') return ctx.member2 ? [ctx.member2] : [];
     return [leader(ctx)];
   }
 
@@ -309,6 +353,7 @@
           if (p.res === 'intel' && v > 0) v = DS.Sim.gainIntel(v);
           else {
             if (p.res === 'crystal' && v > 0 && ctx.explore) v = Math.round(v * (1 + G.teamSkill('搜寻晶核', ctx.explore.team)));
+            if (p.res === 'money' && v > 0) v = Math.round(v * DS.Ext.k('money'));
             S[p.res] = (S[p.res] || 0) + v;
             if (p.res !== 'money' && S[p.res] < 0) S[p.res] = 0;
           }
@@ -354,11 +399,11 @@
               m.hp = U.clamp(m.hp + d, 1, G.maxHp(m));
             } else m[p.need] = U.clamp(m[p.need] + p.v, 0, 100);
           });
-          if (ts.length) chip(res, NEED_ICON[p.need], (p.who === 'team' ? '全员' : p.who === 'm' ? ts[0].name : '') + NEED_NAME[p.need], p.pct ? p.v + '%' : p.v, p.v > 0);
+          if (ts.length) chip(res, NEED_ICON[p.need], (p.who === 'team' ? '全员' : p.who === 'm' || p.who === 'm2' ? ts[0].name : '') + NEED_NAME[p.need], p.pct ? p.v + '%' : p.v, p.v > 0);
           break;
         }
         case 'status': {
-          let ts = p.who === 'rnd' ? [U.pick(people(ctx))] : targets(p.who, ctx);
+          const ts = p.who === 'rnd' ? [U.pick(people(ctx))] : targets(p.who, ctx);
           ts.forEach((m) => {
             // 医生技能降低受伤/患病
             const injury = ['轻伤', '重伤', '骨折', '流血'].includes(p.st);
@@ -373,7 +418,7 @@
         case 'unflag': delete S.flags[p.name]; break;
         case 'house': {
           const b = (S.house.bonus = S.house.bonus || {});
-          if (p.key === 'integrity') { let v = p.v; if (v < 0) v = Math.min(-1, Math.round(v * (1 - Math.min(0.5, G.hstat('def') / 200)))); S.house.integrity = U.clamp(S.house.integrity + v, 0, 100); chip(res, '🏠', '完整度', v + '%'); }
+          if (p.key === 'integrity') { let v = p.v; if (v < 0) v = Math.min(-1, Math.round(v * (1 - Math.min(0.5, G.hstat('def') / 200)) * DS.Ext.k('integ'))); S.house.integrity = U.clamp(S.house.integrity + v, 0, 100); chip(res, '🏠', '完整度', v + '%'); }
           else { b[p.key] = (b[p.key] || 0) + p.v; chip(res, { def: '🛡️', insul: '🧊', antirad: '☢️', cap: '📦' }[p.key], { def: '防御', insul: '保温', antirad: '防辐射', cap: '仓库' }[p.key], p.key === 'insul' || p.key === 'antirad' ? Math.round(p.v * 100) + '%' : p.v, p.v > 0); }
           DS.Sim.refreshEnv();
           break;
@@ -412,6 +457,11 @@
         case 'log': G.log(p.v); break;
         case 'mleave': if (ctx.member && ctx.member.id !== 'me') { DS.Sim.removeMember(ctx.member); chip(res, '🚪', ctx.member.name + ' 离开了', '', false); G.log(ctx.member.name + '离开了。', 'bad'); } break;
         case 'mdie': if (ctx.member && ctx.member.id !== 'me') { chip(res, '🕯️', ctx.member.name + ' 死了', '', false); DS.Sim.kill(ctx.member, 'event'); } break;
+        case 'petget': if (!S.pet) { const pet = DS.Pet.adopt(); chip(res, '🐕', '新伙伴：' + pet.name, '', true); } break;
+        case 'petleave': if (S.pet) { chip(res, '🐕', S.pet.name + ' 离开了', '', false); DS.Pet.leave(); } break;
+        case 'pet': if (S.pet) { const d = DS.Pet.change(p.key, p.v, p.pct); chip(res, '🐕', S.pet.name + ({ loyal: ' 忠诚', hp: ' 生命', hunger: ' 饱腹' }[p.key]), p.pct ? p.v + '%' : d, p.v > 0); } break;
+        case 'bond': if (ctx.member && ctx.member2) { const v = DS.Bond.add(ctx.member, ctx.member2, p.v); chip(res, p.v > 0 ? '💞' : '💢', `${ctx.member.name}&${ctx.member2.name} 羁绊`, p.v); if (v >= 80) DS.Ach.unlock('bond80'); } break;
+        case 'prep': if (S.disaster && S.disaster.type === p.v && !S.disaster.prepared) { S.disaster.prepared = true; S.prepCount = (S.prepCount || 0) + 1; chip(res, DS.DISASTERS[p.v].icon, '已防备' + p.v, '', true); } break;
       }
     });
     return res;

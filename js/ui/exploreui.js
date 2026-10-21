@@ -15,8 +15,8 @@
         const wrap = h('div', { class: 'citymap', html: A.cityMap(S.phase === 'apoc') });
         const [hx, hy] = A.HOME_POS;
         wrap.appendChild(h('div', { class: 'pin', style: { left: hx + '%', top: hy + '%' } }, h('div', { class: 'ic', style: { background: 'linear-gradient(135deg,#4ea4ff,#2b5fae)' } }, h('span', null, '🏠')), h('div', { class: 'lb' }, '安全屋')));
-        DS.LOCATIONS.forEach((loc) => {
-          const [x, y] = A.PIN_POS[loc.id];
+        DS.LOCATIONS.filter(X.visible).forEach((loc) => {
+          const [x, y] = A.PIN_POS[loc.id] || [50, 50];
           const un = X.unlocked(loc.id); const reach = X.reachable(loc); const done = X.locDone(loc.id);
           const n = [0, 1, 2].filter((i) => X.routeDone(loc.id, i)).length;
           const pin = h('div', { class: 'pin' + (!un ? ' lock' : !reach ? ' far' : done ? ' done' : ''), style: { left: x + '%', top: y + '%' }, onclick: () => { DS.Audio.tap(); if (!un) { UI.toast('尚未解锁：完成上一个地点的全部线路，或通过剧情获得线索'); return; } locSheet(loc, sh); } },
@@ -24,6 +24,10 @@
           wrap.appendChild(pin);
         });
         body.appendChild(wrap);
+        const dl = DS.Dispatch.list();
+        body.appendChild(h('div', { class: 'row', style: { padding: '8px 12px 0', gap: '8px' } },
+          h('button', { class: 'btn small primary', onclick: () => { DS.Audio.tap(); DS.ExtUI.dispatch(); } }, '🚩 派遣远征'),
+          h('span', { class: 'tiny muted grow' }, dl.length ? `远征中：${dl.map((d) => X.loc(d.loc).name + '（第' + d.ret + '天回）').join('、')}` : '派队员去已经摸清外围的地点搜刮几天，主角留守')));
         body.appendChild(h('div', { class: 'small muted', style: { padding: '8px 12px calc(10px + var(--safe-b))', lineHeight: 1.6 } }, '每个地点有 3 条线路，走到“❗”处完成线路；完成一个地点的全部线路会解锁下一个地点。灰色图钉表示当前载具到不了。'));
       },
     });
@@ -66,6 +70,7 @@
     const S = G.S; const V = DS.VEHICLES[S.vehicle];
     const pick = new Set(['me']);
     if (X.canGo(G.me())) pick.delete('me');
+    let withPet = !!(S.pet && DS.Pet.canFight());
     UI.sheet({
       title: '选择出行队伍', sub: `${V.icon} ${S.vehicle}：最多 ${V.seats} 人`,
       render(body, tab, sh) {
@@ -84,12 +89,16 @@
             h('span', { class: on ? 'ok' : 'dim', style: { fontSize: '20px' } }, on ? '✔' : '○')));
         });
         body.appendChild(list);
+        if (S.pet) body.appendChild(h('div', { class: 'li click', style: DS.Pet.canFight() ? null : { opacity: 0.45 }, onclick: () => { if (!DS.Pet.canFight()) { UI.toast(`${S.pet.name}现在跟不了（受伤、太虚弱或不够亲近）`); return; } withPet = !withPet; sh.refresh(); } },
+          h('div', { style: { width: '42px', height: '42px', borderRadius: '10px', flex: 'none', display: 'grid', placeItems: 'center', fontSize: '26px', background: '#1a2a40' } }, '🐕'),
+          h('div', { class: 'grow' }, h('div', { class: 'nm' }, `${S.pet.name}（伙伴，不占座位）`), h('div', { class: 'ds' }, `Lv${S.pet.lv}　忠诚 ${S.pet.loyal}　会多嗅出 1 处物资，并参与战斗`)),
+          h('span', { class: withPet ? 'ok' : 'dim', style: { fontSize: '20px' } }, withPet ? '✔' : '○')));
         const team = Array.from(pick).map((id) => G.byId(id));
         const pw = team.reduce((s, m) => s + G.power(m), 0);
         body.appendChild(h('div', { class: 'card small', style: { marginTop: '10px', lineHeight: 1.7 } }, `队伍战力 ${pw}　建议 ≥ ${Math.round((loc.lv + route) * 35 + 60)}`, pick.has('me') ? h('div', { class: 'tiny warn' }, '⚠ 如果全队战败而主角也倒下，这一世就结束了（仓库里的肾上腺素能救一次命）') : null));
         body.appendChild(h('button', { class: 'btn primary block', style: { marginTop: '10px' }, disabled: pick.size ? null : true, onclick: () => {
           if (!pick.size) return;
-          const r = X.start(loc.id, route, Array.from(pick));
+          const r = X.start(loc.id, route, Array.from(pick), { pet: withPet });
           sh.close(); if (parentSheet) parentSheet.close();
           r.notes.forEach((n) => UI.toast(n, 'bad'));
           G.save();

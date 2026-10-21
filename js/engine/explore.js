@@ -9,7 +9,9 @@
   X.routeDone = (id, i) => !!G.S.explore.done[id + '_' + i];
   X.locDone = (id) => [0, 1, 2].every((i) => X.routeDone(id, i));
   X.reachable = (loc) => DS.VEHICLES[G.S.vehicle].range >= loc.dist;
+  X.visible = (loc) => !loc.chapter || (G.S.chapter || 1) >= loc.chapter;
   X.canGo = function (m) {
+    if (m.away) return '远征中';
     if (Object.keys(m.statuses).some((s) => DS.STATUS[s].noExplore)) return '伤病无法出行';
     if (m.energy < 15) return '体力不足';
     return null;
@@ -78,12 +80,13 @@
   };
   function reveal(map) {
     for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const x = map.px + dx, y = map.py + dy; if (inb(map, x, y)) map.cells[y][x].seen = true; }
-    // 直线视野 2 格
-    DIRS.forEach(([dx, dy]) => { for (let k = 1; k <= 2; k++) { const x = map.px + dx * k, y = map.py + dy * k; if (!inb(map, x, y)) break; map.cells[y][x].seen = true; if (map.cells[y][x].wall) break; } });
+    // 直线视野 2 格（冰雾天只有 1 格）
+    const far = DS.Disaster.hit('冰雾') ? 1 : 2;
+    DIRS.forEach(([dx, dy]) => { for (let k = 1; k <= far; k++) { const x = map.px + dx * k, y = map.py + dy * k; if (!inb(map, x, y)) break; map.cells[y][x].seen = true; if (map.cells[y][x].wall) break; } });
   }
 
   // 开始探索
-  X.start = function (locId, routeIdx, teamIds) {
+  X.start = function (locId, routeIdx, teamIds, opts) {
     const S = G.S; const loc = X.loc(locId); const V = DS.VEHICLES[S.vehicle];
     const team = teamIds.map((id) => G.byId(id)).filter(Boolean);
     // 主角带队
@@ -96,9 +99,12 @@
       m.energy = U.clamp(m.energy - 10, 0, 100); m.hunger = U.clamp(m.hunger - 5, 0, 100); m.thirst = U.clamp(m.thirst - 5, 0, 100);
       if (S.env.outT < -30 && Math.random() < 0.15 * (1 - G.coldResist(m))) { if (DS.Sim.addStatus(m, '失温')) notes.push(`${m.name}在路上冻得失温了`); }
       if (S.env.rad > 0 && Math.random() < (S.env.rad / 400) * (1 - G.radResist(m))) { if (DS.Sim.addStatus(m, '轻度辐射')) notes.push(`${m.name}吸入了辐射尘`); }
+      if (DS.Disaster.hit('冰雹') && Math.random() < 0.35) { if (DS.Sim.addStatus(m, '轻伤')) notes.push(`${m.name}被冰雹砸伤了`); }
     });
     const map = X.generate(loc, routeIdx, team);
-    S.exploring = { loc: locId, route: routeIdx, team: team.map((m) => m.id), bag: {}, cap: V.bag, map, steps: 0, found: [], fights: 0, eventDone: false };
+    const pet = !!(opts && opts.pet && DS.Pet.canFight());
+    if (pet) { const c = []; for (let y = 0; y < map.h; y++) for (let x = 0; x < map.w; x++) if (!map.cells[y][x].wall && !map.cells[y][x].obj && map.dist[y][x] >= 2) c.push([x, y]); const p = U.pick(c); if (p) map.cells[p[1]][p[0]].obj = { k: 'loot', cat: U.pick(Object.keys(loc.loot)) }; notes.push(`🐕 ${S.pet.name}跟着出发了，鼻子一路嗅个不停`); }
+    S.exploring = { loc: locId, route: routeIdx, team: team.map((m) => m.id), bag: {}, cap: V.bag, map, steps: 0, found: [], fights: 0, eventDone: false, pet };
     S.explore.runs++; S.stats.explored++;
     return { notes };
   };
@@ -186,6 +192,7 @@
     const res = { got: [], dropped: [], lost: !!lost };
     const team = E.team.map((id) => G.byId(id)).filter(Boolean);
     team.forEach((m) => (m.away = false));
+    if (!lost && X.bagVol() >= 60) DS.Ach.unlock('haul');
     if (!lost) {
       Object.keys(E.bag).forEach((k) => { const n = E.bag[k]; const got = G.addItem(k, n); if (got) res.got.push(`${k}×${got}`); if (got < n) res.dropped.push(`${k}×${n - got}`); });
       // 线路完成 → 解锁下一个地点
@@ -194,7 +201,7 @@
         if (X.locDone(E.loc)) {
           const idx = DS.LOCATIONS.findIndex((l) => l.id === E.loc);
           const nxt = DS.LOCATIONS[idx + 1];
-          if (nxt && !S.explore.locs.includes(nxt.id)) { S.explore.locs.push(nxt.id); res.unlocked = nxt.name; }
+          if (nxt && X.visible(nxt) && !S.explore.locs.includes(nxt.id)) { S.explore.locs.push(nxt.id); res.unlocked = nxt.name; }
         }
       }
     }
