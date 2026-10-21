@@ -68,7 +68,10 @@
           foods.map((n) => h('button', { class: 'btn small', onclick: () => { if (p.hunger >= 100) { UI.toast(`${p.name}吃不下了`); return; } DS.Pet.feedOnce(n); DS.Audio.confirm(); sh.refresh(); refresh(); } }, `喂${n}（${G.qty(n)}）`)),
           !foods.length ? h('span', { class: 'tiny muted' }, '没有狗粮和变异肉。灶台可以把变异肉和大米煮成狗粮。') : null,
           h('button', { class: 'btn small primary', onclick: () => { const e = DS.Pet.play(); if (e) { UI.toast(e); return; } DS.Audio.win(); UI.toast(`你和${p.name}在屋里疯了一会儿（忠诚 +4，心情 +3）`, 'good'); sh.refresh(); refresh(); } }, '🎾 陪它玩'),
-          h('button', { class: 'btn small ghost', onclick: () => { const v = prompt('给它起个新名字（最多 4 个字）', p.name); if (v && v.trim()) { p.name = v.trim().slice(0, 4); sh.refresh(); refresh(); } } }, '✏️ 改名')));
+          h('button', { class: 'btn small ghost', onclick: () => {
+            const inp = h('input', { class: 'input', id: 'pet-name', value: p.name, maxlength: 4 });
+            UI.modal({ title: '给它起个名字', dismiss: false, body: h('div', null, h('div', { class: 'small muted', style: { marginBottom: '6px' } }, '最多 4 个字'), inp), buttons: [{ t: '取消', v: false }, { t: '就叫这个', cls: 'primary', v: true }], onMount: () => setTimeout(() => inp.focus(), 50) }).then((ok) => { const v = inp.value.trim(); if (ok && v) { p.name = v.slice(0, 4); sh.refresh(); refresh(); } });
+          } }, '✏️ 改名')));
       },
     });
   };
